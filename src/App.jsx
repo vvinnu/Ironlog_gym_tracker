@@ -1,19 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase, isCloudConfigured } from "./supabase";
+import WorkoutLogger from "./components/WorkoutLogger";
 import {
-  Activity, BarChart3, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight,
+  Search, Activity, BarChart3, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight,
   CircleUserRound, Dumbbell, Flame, Home, LogOut, Menu, Plus, Settings, Timer,
   TrendingUp, Trophy, Weight, X
 } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-
-const starterExercises = [
-  ["Lat pulldown","Back"],["Pull-up","Back"],["Seated cable row","Back"],["Reverse fly","Shoulders"],
-  ["Biceps curl machine","Arms"],["Hammer curl","Arms"],["Bench press","Chest"],["Incline dumbbell press","Chest"],
-  ["Shoulder press","Shoulders"],["Lateral raise","Shoulders"],["Leg press","Legs"],["Squat","Legs"],
-  ["Romanian deadlift","Legs"],["Leg curl","Legs"],["Calf raise","Legs"],["Cable triceps pushdown","Arms"],
-  ["Plank","Core"],["Cable crunch","Core"]
-].map(([name,muscle])=>({name,muscle}));
 
 const fmt = n => Number(n || 0).toLocaleString(undefined,{maximumFractionDigits:1});
 const dateKey = d => new Date(d).toISOString().slice(0,10);
@@ -30,10 +23,15 @@ export default function App(){
   const [notice,setNotice] = useState("");
   const [workouts,setWorkouts] = useState([]);
   const [weights,setWeights] = useState([]);
-  const [exerciseList,setExerciseList] = useState(starterExercises);
+  const [exerciseList,setExerciseList] = useState([]);
+  const [exerciseSearch,setExerciseSearch] = useState("");
+  const [exerciseSearchOpen,setExerciseSearchOpen] = useState(false);
+  const [newExerciseName,setNewExerciseName] = useState("");
+  const [newExerciseMuscle,setNewExerciseMuscle] = useState("");
+  const [showExerciseForm,setShowExerciseForm] = useState(false);
   const [activeWorkout,setActiveWorkout] = useState(null);
   const [newWeight,setNewWeight] = useState("");
-  const [selectedExercise,setSelectedExercise] = useState("Lat pulldown");
+  const [selectedExercise,setSelectedExercise] = useState("");
   const [setWeight,setSetWeight] = useState("");
   const [setReps,setSetReps] = useState("10");
   const [muscleFilter,setMuscleFilter] = useState("All");
@@ -50,13 +48,51 @@ export default function App(){
     if(!user || !supabase) return;
     let alive=true;
     (async()=>{
-      const [w,b] = await Promise.all([
-        supabase.from("workouts").select("*, workout_sets(*)").order("workout_date",{ascending:false}),
-        supabase.from("bodyweight_logs").select("*").order("logged_at",{ascending:true})
+      const [w,b,e] = await Promise.all([
+        supabase
+  .from("workouts")
+  .select(`
+    *,
+    workout_exercises (
+      id,
+      exercise_id,
+      exercise_name,
+      position,
+      workout_sets (
+        id,
+        set_number,
+        weight_kg,
+        reps,
+        duration_seconds,
+        distance_km
+      )
+    )
+  `)
+  .eq("status", "completed")
+  .order("workout_date", { ascending: false }),
+        supabase.from("bodyweight_logs").select("*").order("logged_at",{ascending:true}),
+        supabase.from("exercises").select("id,name,primary_muscle,equipment,user_id").order("name")
       ]);
       if(!alive) return;
-      if(w.error) setNotice(w.error.message); else setWorkouts((w.data||[]).map(x=>({...x,sets:x.workout_sets||[]})));
+ if (w.error) {
+  setNotice(w.error.message);
+} else {
+  setWorkouts(
+    (w.data || []).map(workout => ({
+      ...workout,
+      sets: (workout.workout_exercises || []).flatMap(
+        exercise =>
+          (exercise.workout_sets || []).map(set => ({
+            ...set,
+            exercise_id: exercise.exercise_id,
+            exercise_name: exercise.exercise_name,
+          }))
+      ),
+    }))
+  );
+}
       if(b.error) setNotice(b.error.message); else setWeights(b.data||[]);
+      if(e.error) setNotice(e.error.message); else {setExerciseList(e.data||[]);setSelectedExercise(old => old || e.data?.[0]?.id || "");}
     })();
     return ()=>{alive=false};
   },[user]);
@@ -79,26 +115,107 @@ export default function App(){
     if(result.error) setNotice(result.error.message);
     else setNotice(authMode==="signup" ? "Check your email to confirm your account." : "Signed in.");
   }
-  async function signOut(){await supabase?.auth.signOut();setUser(null);setWorkouts([]);setWeights([])}
-  async function saveWorkout(){
-    if(!activeWorkout) return;
-    if(!supabase || !user){setNotice("Sign in after connecting Supabase to save workouts to your cloud account.");return;}
-    setBusy(true);
-    const {sets,...workout}=activeWorkout;
-    const saved=await supabase.from("workouts").insert({...workout,user_id:user.id}).select().single();
-    if(saved.error){setNotice(saved.error.message);setBusy(false);return;}
-    if(sets.length){
-      const rows=sets.map(s=>({...s,workout_id:saved.data.id,user_id:user.id}));
-      const ins=await supabase.from("workout_sets").insert(rows);
-      if(ins.error){setNotice(ins.error.message);setBusy(false);return;}
+  async function signOut(){await supabase?.auth.signOut();setUser(null);setWorkouts([]);setWeights([]);setExerciseList([]);setSelectedExercise("")}
+  const selectedExerciseData = exerciseList.find(e=>e.id===selectedExercise);
+  const matchingExercises = exerciseList.filter(e=>e.name.toLowerCase().includes(exerciseSearch.trim().toLowerCase()));
+
+  async function createExercise(){
+    const name=newExerciseName.trim();
+    if(!name){setNotice("Exercise name is required.");return;}
+    if(exerciseList.some(e=>e.name.trim().toLowerCase()===name.toLowerCase())){
+      setNotice("An exercise with this name already exists. Select it from the list.");return;
     }
-    const fresh={...saved.data,sets};
-    setWorkouts(prev=>[fresh,...prev]);setActiveWorkout(null);setTab("History");setBusy(false);setNotice("Workout saved to your account.");
+    setBusy(true);
+    const {data,error}=await supabase.from("exercises").insert({
+      user_id:user.id,name,primary_muscle:newExerciseMuscle.trim()||null
+    }).select("id,name,primary_muscle,equipment,user_id").single();
+    setBusy(false);
+    if(error){setNotice(error.message);return;}
+    setExerciseList(prev=>[...prev,data].sort((a,b)=>a.name.localeCompare(b.name)));
+    setSelectedExercise(data.id);setExerciseSearch("");setNewExerciseName("");
+    setNewExerciseMuscle("");setShowExerciseForm(false);setNotice("Exercise created.");
   }
-  function addSet(){
-    if(!activeWorkout || !setWeight || !setReps) return;
-    setActiveWorkout(w=>({...w,sets:[...w.sets,{id:crypto.randomUUID(),exercise_name:selectedExercise,weight_kg:Number(setWeight),reps:Number(setReps),set_number:w.sets.filter(s=>s.exercise_name===selectedExercise).length+1}]}));
-    setSetWeight("");
+
+  async function saveSession(exercises, complete = false) {
+    if (!supabase || !user || !activeWorkout) {
+      throw new Error("Sign in and start a workout first.");
+    }
+
+    const { data, error } = await supabase.rpc(
+      "ironlog_save_session",
+      {
+        p_workout_id: activeWorkout.cloud_id || null,
+        p_name: activeWorkout.name.trim(),
+        p_workout_date: activeWorkout.workout_date,
+        p_notes: activeWorkout.notes || "",
+        p_exercises: exercises,
+        p_complete: complete,
+      }
+    );
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (!complete) {
+      setActiveWorkout(previous =>
+        previous
+          ? { ...previous, cloud_id: data }
+          : previous
+      );
+
+      return data;
+    }
+
+    const { data: completed, error: historyError } =
+      await supabase
+        .from("workouts")
+        .select(`
+          *,
+          workout_exercises (
+            id,
+            exercise_id,
+            exercise_name,
+            position,
+            workout_sets (
+              id,
+              set_number,
+              weight_kg,
+              reps,
+              duration_seconds,
+              distance_km
+            )
+          )
+        `)
+        .eq("status", "completed")
+        .order("workout_date", { ascending: false });
+
+    if (historyError) {
+      setNotice(
+        "Workout saved, but history could not refresh: " +
+        historyError.message
+      );
+    } else {
+      setWorkouts(
+        (completed || []).map(workout => ({
+          ...workout,
+          sets: (workout.workout_exercises || []).flatMap(
+            exercise =>
+              (exercise.workout_sets || []).map(set => ({
+                ...set,
+                exercise_id: exercise.exercise_id,
+                exercise_name: exercise.exercise_name,
+              }))
+          ),
+        }))
+      );
+      setNotice("Workout saved to Supabase.");
+    }
+
+    setActiveWorkout(null);
+    setTab("History");
+
+    return data;
   }
   async function logWeight(){
     const value=Number(newWeight);
@@ -155,20 +272,105 @@ export default function App(){
       </section>}
       {tab==="Workouts" && <section className="content">
         <div className="welcome-row"><div><div className="eyebrow">SESSION LOGGER</div><h1>Workout <span>builder.</span></h1><p className="muted">Record each working set as you train.</p></div>{!activeWorkout&&<button className="primary" onClick={()=>setActiveWorkout(emptyWorkout())}><Plus size={18}/> New workout</button>}</div>
-        {activeWorkout?<div className="panel workout-builder">
-          <div className="builder-top"><div><div className="eyebrow">IN PROGRESS</div><h2>{activeWorkout.name}</h2></div><button className="icon-btn" onClick={()=>setActiveWorkout(null)}><X/></button></div>
-          <div className="builder-fields"><div className="field"><label>Workout name</label><input value={activeWorkout.name} onChange={e=>setActiveWorkout(w=>({...w,name:e.target.value}))}/></div><div className="field"><label>Date</label><input type="date" value={activeWorkout.workout_date} onChange={e=>setActiveWorkout(w=>({...w,workout_date:e.target.value}))}/></div></div>
-          <div className="set-entry"><div className="field exercise-field"><label>Exercise</label><select value={selectedExercise} onChange={e=>setSelectedExercise(e.target.value)}>{exerciseList.map(e=><option key={e.name}>{e.name}</option>)}</select></div><div className="field"><label>Weight (kg)</label><input type="number" min="0" step="0.5" value={setWeight} onChange={e=>setSetWeight(e.target.value)} placeholder="45"/></div><div className="field"><label>Reps</label><input type="number" min="1" value={setReps} onChange={e=>setSetReps(e.target.value)}/></div><button className="primary add-set" onClick={addSet}><Plus size={17}/> Add set</button></div>
-          <div className="sets-table"><div className="set-head"><span>EXERCISE</span><span>SET</span><span>WEIGHT</span><span>REPS</span><span></span></div>
-            {activeWorkout.sets.length?activeWorkout.sets.map((s,i)=><div className="set-row" key={s.id}><b>{s.exercise_name}</b><span>{s.set_number}</span><span>{fmt(s.weight_kg)} kg</span><span>{s.reps}</span><button className="remove-btn" onClick={()=>setActiveWorkout(w=>({...w,sets:w.sets.filter(x=>x.id!==s.id)}))}><X size={15}/></button></div>):<div className="empty-inline">No sets yet. Add your first set above.</div>}
-          </div>
-          <div className="field"><label>Session notes (optional)</label><textarea rows="2" placeholder="How did the session feel?" value={activeWorkout.notes} onChange={e=>setActiveWorkout(w=>({...w,notes:e.target.value}))}/></div>
-          <div className="builder-footer"><span className="muted small">{activeWorkout.sets.length} sets · {fmt(activeWorkout.sets.reduce((a,s)=>a+s.weight_kg*s.reps,0))} kg volume</span><button className="primary" disabled={!activeWorkout.sets.length||busy} onClick={saveWorkout}><Check size={17}/> Save workout</button></div>
-        </div>:<div className="panel"><Empty title="Ready for your next session?" text="Start a workout, choose an exercise, and log weight and reps set by set."/><button className="primary centered" onClick={()=>setActiveWorkout(emptyWorkout())}><Plus size={18}/> Start a workout</button></div>}
-        <div className="panel"><div className="panel-head"><div><div className="eyebrow">EXERCISE LIBRARY</div><h2>Exercises</h2></div><select className="filter-select" value={muscleFilter} onChange={e=>setMuscleFilter(e.target.value)}>{["All","Back","Chest","Shoulders","Arms","Legs","Core"].map(x=><option>{x}</option>)}</select></div><div className="exercise-grid">{exerciseList.filter(e=>muscleFilter==="All"||e.muscle===muscleFilter).map(e=><div className="exercise-chip" key={e.name}><span>{e.name}</span><small>{e.muscle}</small></div>)}</div></div>
+{activeWorkout ? (
+  <div className="panel workout-builder">
+    <div className="builder-top">
+      <div>
+        <div className="eyebrow">IN PROGRESS</div>
+        <h2>{activeWorkout.name}</h2>
+      </div>
+
+      <button
+        className="icon-btn"
+        title="Close workout preview"
+        onClick={() => {
+          if (
+            window.confirm(
+              "Close this workout preview? Unsaved entries will be lost."
+            )
+          ) {
+            setActiveWorkout(null);
+          }
+        }}
+      >
+        <X />
+      </button>
+    </div>
+
+    <div className="builder-fields">
+      <div className="field">
+        <label>Workout name</label>
+        <input
+          value={activeWorkout.name}
+          onChange={e =>
+            setActiveWorkout(w => ({
+              ...w,
+              name: e.target.value,
+            }))
+          }
+        />
+      </div>
+
+      <div className="field">
+        <label>Date</label>
+        <input
+          type="date"
+          value={activeWorkout.workout_date}
+          onChange={e =>
+            setActiveWorkout(w => ({
+              ...w,
+              workout_date: e.target.value,
+            }))
+          }
+        />
+      </div>
+    </div>
+
+<WorkoutLogger
+  exercises={exerciseList}
+  onSaveExercise={payload =>
+    saveSession(payload, false)
+  }
+  onSaveWorkout={payload =>
+    saveSession(payload, true)
+  }
+/>
+
+    <div className="field">
+      <label>Session notes</label>
+      <textarea
+        rows="2"
+        value={activeWorkout.notes}
+        onChange={e =>
+          setActiveWorkout(w => ({
+            ...w,
+            notes: e.target.value,
+          }))
+        }
+        placeholder="How did the session feel?"
+      />
+    </div>
+  </div>
+) : (
+  <div className="panel">
+    <Empty
+      title="Ready for your next session?"
+      text="Start a workout and add your exercises."
+    />
+    <button
+      className="primary centered"
+      onClick={() => setActiveWorkout(emptyWorkout())}
+    >
+      <Plus size={18} />
+      Start a workout
+    </button>
+  </div>
+)}
+        
+        <div className="panel"><div className="panel-head"><div><div className="eyebrow">EXERCISE LIBRARY</div><h2>Exercises</h2></div><select className="filter-select" value={muscleFilter} onChange={e=>setMuscleFilter(e.target.value)}>{["All","Back","Chest","Shoulders","Arms","Legs","Core"].map(x=><option>{x}</option>)}</select></div><div className="exercise-grid">{exerciseList.filter(e=>muscleFilter==="All"||e.primary_muscle===muscleFilter).map(e=><div className="exercise-chip" key={e.id}><span>{e.name}</span><small>{e.primary_muscle||"Other"}</small></div>)}</div></div>
       </section>}
       {tab==="History" && <section className="content"><div className="welcome-row"><div><div className="eyebrow">ALL SESSIONS</div><h1>Training <span>history.</span></h1><p className="muted">Every session is another step forward.</p></div><button className="primary" onClick={()=>{setActiveWorkout(emptyWorkout());setTab("Workouts")}}><Plus size={18}/> Log workout</button></div><div className="panel">{workouts.length?workouts.map(w=><WorkoutRow key={w.id} workout={w} detailed/>):<Empty title="No workouts logged yet" text="Your completed sessions will be collected here."/>}</div></section>}
-      {tab==="Progress" && <section className="content"><div className="welcome-row"><div><div className="eyebrow">THE BIG PICTURE</div><h1>Your <span>progress.</span></h1><p className="muted">Measure consistency, strength and body-weight trends.</p></div></div><div className="two-col"><div className="panel"><div className="panel-head"><div><div className="eyebrow">BODY WEIGHT</div><h2>Weight trend</h2></div></div><WeightChart data={weights} large/><div className="muted small">Entries are shown in the order they were logged.</div></div><div className="panel"><div className="panel-head"><div><div className="eyebrow">TRAINING VOLUME</div><h2>Recent sessions</h2></div></div>{workouts.slice(0,8).map(w=><div className="volume-row" key={w.id}><span>{new Date(w.workout_date+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"})}</span><div className="volume-bar"><i style={{width:`${Math.min(100,(w.sets.reduce((a,s)=>a+s.weight_kg*s.reps,0)/Math.max(1,totalVolume))*100*4)}%`}}/></div><b>{fmt(w.sets.reduce((a,s)=>a+s.weight_kg*s.reps,0))}</b></div>)}{!workouts.length&&<Empty title="No training data yet" text="Log a few workouts to see your volume trend."/>}</div></div><div className="panel"><div className="panel-head"><div><div className="eyebrow">PERSONAL BESTS</div><h2>Best logged weight by exercise</h2></div></div>{Object.keys(prs).length?<div className="record-grid">{Object.entries(prs).map(([n,v])=><div className="record" key={n}><span>{n}</span><b>{fmt(v)} <small>kg</small></b></div>)}</div>:<Empty title="Your first PR is waiting" text="Start logging sets to build your personal records."/>}</div></section>}
+      {tab==="Progress" && <section className="content"><div className="welcome-row"><div><div className="eyebrow">THE BIG PICTURE</div><h1>Your <span>progress.</span></h1><p className="muted">Measure consistency, strength and body-weight trends.</p></div></div><div className="two-col"><div className="panel"><div className="panel-head"><div><div className="eyebrow">BODY WEIGHT</div><h2>Weight trend</h2></div></div><WeightChart data={weights} large/><div className="muted small">Entries are shown in the order they were logged.</div></div><div className="panel"><div className="panel-head"><div><div className="eyebrow">TRAINING VOLUME</div><h2>Recent sessions</h2></div></div>{workouts.slice(0,8).map(w=><div className="volume-row" key={w.id}><span>{new Date(w.workout_date+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"})}</span><div className="volume-bar"><i style={{width:`${Math.min(100,(w.sets.reduce((a,s)=>a+(Number(s.weight_kg)||0)*(Number(s.reps)||0),0)/Math.max(1,totalVolume))*100*4)}%`}}/></div><b>{fmt(w.sets.reduce((a,s)=>a+(Number(s.weight_kg)||0)*(Number(s.reps)||0),0))}</b></div>)}{!workouts.length&&<Empty title="No training data yet" text="Log a few workouts to see your volume trend."/>}</div></div><div className="panel"><div className="panel-head"><div><div className="eyebrow">PERSONAL BESTS</div><h2>Best logged weight by exercise</h2></div></div>{Object.keys(prs).length?<div className="record-grid">{Object.entries(prs).map(([n,v])=><div className="record" key={n}><span>{n}</span><b>{fmt(v)} <small>kg</small></b></div>)}</div>:<Empty title="Your first PR is waiting" text="Start logging sets to build your personal records."/>}</div></section>}
       {tab==="Settings" && <section className="content"><div className="welcome-row"><div><div className="eyebrow">PREFERENCES</div><h1>App <span>settings.</span></h1><p className="muted">Manage your account and training units.</p></div></div><div className="panel settings-panel"><h2>Account</h2><p className="muted">{user.email}</p><div className="setting-row"><div><b>Cloud synchronization</b><small>Your workouts and body weight are stored in your Supabase account.</small></div><span className="sync-pill"><span className="live-dot"/> Connected</span></div><div className="setting-row"><div><b>Units</b><small>Weights and body weight are currently recorded in kilograms.</small></div><span className="muted">kg</span></div><button className="danger-btn" onClick={signOut}><LogOut size={17}/> Sign out</button></div></section>}
       <footer>IRONLOG <span>•</span> BUILT FOR YOUR NEXT REP</footer>
     </main>

@@ -1,0 +1,132 @@
+
+.ironlog-logger {
+  display: grid;
+  gap: 20px;
+  max-width: 900px;
+  color: #f5f7fa;
+}
+
+.ironlog-search {
+  position: relative;
+}
+
+.ironlog-search input,
+.ironlog-set-row input {
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #394454;
+  border-radius: 9px;
+  background: #0e141d;
+  color: #fff;
+  box-sizing: border-box;
+}
+
+.ironlog-results {
+  display: grid;
+  margin-top: 5px;
+  border: 1px solid #394454;
+  border-radius: 10px;
+  background: #19212d;
+}
+
+.ironlog-results button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: transparent;
+  border: 0;
+  color: white;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ironlog-card {
+  padding: 20px;
+  background: #171e29;
+  border: 1px solid #343f4e;
+  border-radius: 14px;
+}
+
+.ironlog-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.ironlog-card-header h3 {
+  margin: 0 0 5px;
+}
+
+.ironlog-card-header small {
+  color: #a1adbc;
+}
+
+.ironlog-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ironlog-actions button {
+  background: transparent;
+  color: #c9d2df;
+  border: 0;
+  cursor: pointer;
+}
+
+.ironlog-set-grid {
+  display: grid;
+  grid-template-columns: 40px minmax(0,1fr) minmax(0,1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.ironlog-set-grid > strong {
+  font-size: 12px;
+  color: #a1adbc;
+}
+
+.ironlog-set-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 10px;
+}
+
+.ironlog-add-set,
+.ironlog-save-exercise,
+.ironlog-save-workout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.ironlog-add-set {
+  background: transparent;
+  color: white;
+  border: 1px solid #465264;
+}
+
+.ironlog-save-exercise,
+.ironlog-save-workout {
+  background: #b4e65b;
+  color: #111827;
+  border: 0;
+  font-weight: 700;
+}
+
+.ironlog-save-exercise:disabled,
+.ironlog-save-workout:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
