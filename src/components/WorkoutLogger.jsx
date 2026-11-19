@@ -12,6 +12,7 @@ const blankRows = () =>
 
 export default function WorkoutLogger({
   exercises,
+  previousPerformance = {},
   onSaveExercise,
   onSaveWorkout,
 }) {
@@ -63,6 +64,7 @@ export default function WorkoutLogger({
         name: exercise.name,
         rows: blankRows(),
         collapsed: false,
+        previousCollapsed: false,
         saved: false,
       },
     ]);
@@ -95,6 +97,60 @@ export default function WorkoutLogger({
           reps: "",
         },
       ],
+    }));
+  };
+
+    const copyPreviousSets = card => {
+    const previous = previousPerformance[card.exercise_id];
+
+    if (!previous || !previous.sets?.length) {
+      setMessage("No previous sets available to copy.");
+      return;
+    }
+
+    const hasEnteredValues = card.rows.some(
+      row => row.weight !== "" || row.reps !== ""
+    );
+
+    if (hasEnteredValues) {
+      const confirmed = window.confirm(
+        `Replace today's entered sets for ${card.name} ` +
+        "with the previous performance?"
+      );
+
+      if (!confirmed) return;
+    }
+
+    const copiedRows = [...previous.sets]
+      .sort((a, b) => a.set_number - b.set_number)
+      .map(set => ({
+        id: crypto.randomUUID(),
+        weight:
+          set.weight_kg == null
+            ? ""
+            : String(set.weight_kg),
+        reps:
+          set.reps == null
+            ? ""
+            : String(set.reps),
+      }));
+
+    updateCard(card.id, current => ({
+      ...current,
+      rows: copiedRows,
+      saved: false,
+    }));
+
+    setMessage(
+      `${copiedRows.length} previous sets copied into ${card.name}. ` +
+      "You can now edit them before saving."
+    );
+  };
+
+  const togglePreviousPerformance = cardId => {
+    updateCard(cardId, card => ({
+      ...card,
+      previousCollapsed: !card.previousCollapsed,
     }));
   };
 
@@ -284,6 +340,136 @@ export default function WorkoutLogger({
 
           {!card.collapsed && (
             <>
+              {(() => {
+                const previous =
+                  previousPerformance[card.exercise_id];
+
+                return (
+                  <div
+                    className="ironlog-previous-performance"
+                    style={{
+                      marginBottom: "18px",
+                      padding: "14px",
+                      border: "1px solid #303746",
+                      borderRadius: "10px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: "12px",
+                      }}
+                    >
+                      <div>
+                        <strong>Previous Performance</strong>
+
+                        {previous && (
+                          <div
+                            style={{
+                              fontSize: "12px",
+                              opacity: 0.7,
+                              marginTop: "4px",
+                            }}
+                          >
+                            {previous.workout_name || "Workout"}
+                            {" · "}
+                            {previous.workout_date}
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        aria-label={
+                          card.previousCollapsed
+                            ? "Expand previous performance"
+                            : "Collapse previous performance"
+                        }
+                        aria-expanded={!card.previousCollapsed}
+                        onClick={() =>
+                          togglePreviousPerformance(card.id)
+                        }
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "5px",
+                        }}
+                      >
+                        {card.previousCollapsed ? (
+                          <ChevronDown size={16} />
+                        ) : (
+                          <ChevronUp size={16} />
+                        )}
+
+                        {card.previousCollapsed
+                          ? "Expand"
+                          : "Collapse"}
+                      </button>
+                    </div>
+
+                    {!card.previousCollapsed && (
+                      <div style={{ marginTop: "14px" }}>
+                        {previous?.sets?.length ? (
+                          <>
+                            <div className="ironlog-set-grid">
+                              <strong>Set</strong>
+                              <strong>Weight (kg)</strong>
+                              <strong>Reps</strong>
+
+                              {[...previous.sets]
+                                .sort(
+                                  (a, b) =>
+                                    a.set_number - b.set_number
+                                )
+                                .map((set, index) => (
+                                  <div
+                                    className="ironlog-set-row"
+                                    key={index}
+                                  >
+                                    <span>{set.set_number}</span>
+
+                                    <span>
+                                      {set.weight_kg ?? "—"}
+                                    </span>
+
+                                    <span>
+                                      {set.reps ?? "—"}
+                                    </span>
+                                  </div>
+                                ))}
+                            </div>
+
+                            <button
+                              type="button"
+                              className="ironlog-add-set"
+                              disabled={busy}
+                              onClick={() =>
+                                copyPreviousSets(card)
+                              }
+                              style={{ marginTop: "12px" }}
+                            >
+                              <Save size={16} />
+                              Copy to Today's Sets
+                            </button>
+                          </>
+                        ) : (
+                          <p
+                            style={{
+                              opacity: 0.7,
+                              fontSize: "13px",
+                            }}
+                          >
+                            No previous performance recorded.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               <div className="ironlog-set-grid">
                 <strong>Set</strong>
                 <strong>Weight (kg)</strong>

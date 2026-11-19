@@ -105,6 +105,51 @@ export default function App(){
   const latestWeight = weights.length ? Number(weights[weights.length-1].weight_kg) : null;
   const weekCount = workouts.filter(w=>(Date.now()-new Date(w.workout_date+"T12:00:00").getTime())<7*86400000).length;
 
+     const previousPerformance = useMemo(() => {
+    const latest = {};
+
+    const sortedWorkouts = [...workouts].sort((a, b) => {
+      const dateDifference =
+        b.workout_date.localeCompare(a.workout_date);
+
+      if (dateDifference !== 0) return dateDifference;
+
+      return (b.completed_at || b.created_at || "").localeCompare(
+        a.completed_at || a.created_at || ""
+      );
+    });
+
+    for (const workout of sortedWorkouts) {
+      const groupedExercises = {};
+
+      for (const set of workout.sets || []) {
+        if (!set.exercise_id) continue;
+
+        if (!groupedExercises[set.exercise_id]) {
+          groupedExercises[set.exercise_id] = [];
+        }
+
+        groupedExercises[set.exercise_id].push({
+          set_number: set.set_number,
+          weight_kg: set.weight_kg,
+          reps: set.reps,
+        });
+      }
+
+      for (const [exerciseId, sets] of Object.entries(groupedExercises)) {
+        if (latest[exerciseId]) continue;
+
+        latest[exerciseId] = {
+          workout_date: workout.workout_date,
+          workout_name: workout.name,
+          sets: sets.sort((a, b) => a.set_number - b.set_number),
+        };
+      }
+    }
+
+    return latest;
+  }, [workouts]);
+
   async function auth(){
     if(!supabase){setNotice("Cloud setup is not connected yet. Follow the Supabase setup guide in the project README.");return;}
     setBusy(true); setNotice("");
@@ -328,6 +373,7 @@ export default function App(){
 
 <WorkoutLogger
   exercises={exerciseList}
+  previousPerformance={previousPerformance}
   onSaveExercise={payload =>
     saveSession(payload, false)
   }
@@ -367,7 +413,7 @@ export default function App(){
   </div>
 )}
         
-        <div className="panel"><div className="panel-head"><div><div className="eyebrow">EXERCISE LIBRARY</div><h2>Exercises</h2></div><select className="filter-select" value={muscleFilter} onChange={e=>setMuscleFilter(e.target.value)}>{["All","Back","Chest","Shoulders","Arms","Legs","Core"].map(x=><option>{x}</option>)}</select></div><div className="exercise-grid">{exerciseList.filter(e=>muscleFilter==="All"||e.primary_muscle===muscleFilter).map(e=><div className="exercise-chip" key={e.id}><span>{e.name}</span><small>{e.primary_muscle||"Other"}</small></div>)}</div></div>
+        <div className="panel"><div className="panel-head"><div><div className="eyebrow">EXERCISE LIBRARY</div><h2>Exercises</h2></div><select className="filter-select" value={muscleFilter} onChange={e=>setMuscleFilter(e.target.value)}>{["All","Back","Chest","Shoulders","Arms","Legs","Core"].map(x=><option key={x} value={x}>{x}</option>)}</select></div><div className="exercise-grid">{exerciseList.filter(e=>muscleFilter==="All"||e.primary_muscle===muscleFilter).map(e=><div className="exercise-chip" key={e.id}><span>{e.name}</span><small>{e.primary_muscle||"Other"}</small></div>)}</div></div>
       </section>}
       {tab==="History" && <section className="content"><div className="welcome-row"><div><div className="eyebrow">ALL SESSIONS</div><h1>Training <span>history.</span></h1><p className="muted">Every session is another step forward.</p></div><button className="primary" onClick={()=>{setActiveWorkout(emptyWorkout());setTab("Workouts")}}><Plus size={18}/> Log workout</button></div><div className="panel">{workouts.length?workouts.map(w=><WorkoutRow key={w.id} workout={w} detailed/>):<Empty title="No workouts logged yet" text="Your completed sessions will be collected here."/>}</div></section>}
       {tab==="Progress" && <section className="content"><div className="welcome-row"><div><div className="eyebrow">THE BIG PICTURE</div><h1>Your <span>progress.</span></h1><p className="muted">Measure consistency, strength and body-weight trends.</p></div></div><div className="two-col"><div className="panel"><div className="panel-head"><div><div className="eyebrow">BODY WEIGHT</div><h2>Weight trend</h2></div></div><WeightChart data={weights} large/><div className="muted small">Entries are shown in the order they were logged.</div></div><div className="panel"><div className="panel-head"><div><div className="eyebrow">TRAINING VOLUME</div><h2>Recent sessions</h2></div></div>{workouts.slice(0,8).map(w=><div className="volume-row" key={w.id}><span>{new Date(w.workout_date+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"})}</span><div className="volume-bar"><i style={{width:`${Math.min(100,(w.sets.reduce((a,s)=>a+(Number(s.weight_kg)||0)*(Number(s.reps)||0),0)/Math.max(1,totalVolume))*100*4)}%`}}/></div><b>{fmt(w.sets.reduce((a,s)=>a+(Number(s.weight_kg)||0)*(Number(s.reps)||0),0))}</b></div>)}{!workouts.length&&<Empty title="No training data yet" text="Log a few workouts to see your volume trend."/>}</div></div><div className="panel"><div className="panel-head"><div><div className="eyebrow">PERSONAL BESTS</div><h2>Best logged weight by exercise</h2></div></div>{Object.keys(prs).length?<div className="record-grid">{Object.entries(prs).map(([n,v])=><div className="record" key={n}><span>{n}</span><b>{fmt(v)} <small>kg</small></b></div>)}</div>:<Empty title="Your first PR is waiting" text="Start logging sets to build your personal records."/>}</div></section>}
