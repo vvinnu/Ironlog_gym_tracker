@@ -11,36 +11,46 @@ const blankRows = () =>
   }));
 
 export default function WorkoutLogger({
+  userId,
   exercises,
   previousPerformance = {},
   onSaveExercise,
   onSaveWorkout,
 }) {
-  const [cards, setCards] = useState(() => {
-    try {
-      const saved = localStorage.getItem("ironlog-workout-draft");
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+// ============================================================
+// 01. ACCOUNT-SPECIFIC WORKOUT DRAFT
+// ============================================================
 
-  const [search, setSearch] = useState("");
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
+// 01.01 - Each account uses a separate localStorage key.
+const draftKey = `ironlog-workout-draft:${userId}`;
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        "ironlog-workout-draft",
-        JSON.stringify(cards)
-      );
-    } catch {
-      setMessage(
-        "Unable to save draft locally. Avoid refreshing this page."
-      );
-    }
-  }, [cards]);
+// 01.02 - Restore the current user's unfinished workout.
+const [cards, setCards] = useState(() => {
+  try {
+    const saved = localStorage.getItem(draftKey);
+    const parsed = saved ? JSON.parse(saved) : [];
+
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+});
+
+// 01.03 - Workout logger UI state.
+const [search, setSearch] = useState("");
+const [message, setMessage] = useState("");
+const [busy, setBusy] = useState(false);
+
+// 01.04 - Automatically save unfinished changes locally.
+useEffect(() => {
+  try {
+    localStorage.setItem(draftKey, JSON.stringify(cards));
+  } catch {
+    setMessage(
+      "Unable to save draft locally. Avoid refreshing this page."
+    );
+  }
+}, [cards, draftKey]);
 
   const updateCard = (id, change) => {
     setCards(previous =>
@@ -247,7 +257,7 @@ export default function WorkoutLogger({
 
       await onSaveWorkout(payload);
 
-      localStorage.removeItem("ironlog-workout-draft");
+      localStorage.removeItem(draftKey);
       setCards([]);
       setMessage("Workout saved successfully.");
     } catch (error) {
