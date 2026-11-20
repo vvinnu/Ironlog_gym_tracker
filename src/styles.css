@@ -339,3 +339,251 @@
     width: 100%;
   }
 }
+
+
+
+/* ============================================================
+   12. EXPANDABLE WORKOUT HISTORY
+   ============================================================ */
+
+/* 12.01 - Expandable session container */
+.history-session {
+  border-top: 1px solid var(--line);
+}
+
+.history-session-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.history-session-summary::-webkit-details-marker {
+  display: none;
+}
+
+.history-session-summary:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 3px;
+}
+
+.history-summary-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-summary-content .workout-row {
+  border-top: none;
+}
+
+.history-chevron {
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 0.2s ease;
+}
+
+.history-session[open] .history-chevron {
+  transform: rotate(180deg);
+}
+
+
+/* ============================================================
+   12.02 - COMPACT WORKOUT DETAILS
+   ============================================================ */
+
+.history-session-details {
+  padding: 18px 20px 22px;
+  border-top: 1px solid var(--line);
+}
+
+.history-detail-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.history-detail-heading h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* 12.02.01 - Exercise sections without oversized cards */
+.history-exercise {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.history-exercise:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.history-exercise-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.history-exercise-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.history-exercise-number {
+  flex-shrink: 0;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--lime);
+}
+
+.history-exercise-heading h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.history-exercise-count {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ============================================================
+   12.03 - COMPACT RECORDED SETS
+   ============================================================ */
+
+/* 12.03.01 - Set table container */
+.history-set-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #171d28;
+}
+
+/* 12.03.02 - Aligned set columns */
+.history-set-header,
+.history-set-row {
+  display: grid;
+  grid-template-columns:
+    minmax(55px, 0.7fr)
+    minmax(80px, 1fr)
+    minmax(60px, 0.7fr);
+  align-items: center;
+  column-gap: 12px;
+  padding: 10px 14px;
+}
+
+.history-set-header {
+  background: #1d2531;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+}
+
+.history-set-row {
+  border-top: 1px solid #293140;
+  font-size: 12px;
+  color: #e7ebf1;
+}
+
+.history-set-number {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.history-set-weight {
+  font-weight: 700;
+}
+
+.history-set-reps {
+  font-weight: 600;
+}
+
+/* 12.03.03 - Duration and distance, when recorded */
+.history-set-extras {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #303847;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* 12.04 - Workout notes */
+.history-workout-notes {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 9px;
+  background: #1c242e;
+}
+
+.history-workout-notes strong {
+  font-size: 12px;
+}
+
+.history-workout-notes p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+
+/* 12.05 - Mobile history layout */
+@media (max-width: 700px) {
+  .history-session-details {
+    padding: 14px 2px 18px;
+  }
+
+  .history-detail-heading h3 {
+    font-size: 15px;
+  }
+
+  .history-exercise {
+    padding: 15px 0;
+  }
+
+  .history-exercise-title {
+    gap: 9px;
+  }
+
+  .history-exercise-heading h4 {
+    font-size: 12px;
+  }
+
+  .history-set-header,
+  .history-set-row {
+    grid-template-columns:
+      minmax(35px, 0.6fr)
+      minmax(65px, 1fr)
+      minmax(40px, 0.6fr);
+    gap: 6px;
+    padding: 10px;
+  }
+
+  .history-set-header {
+    font-size: 9px;
+  }
+
+  .history-set-row {
+    font-size: 11px;
+  }
+
+  .history-set-extras {
+    font-size: 10px;
+  }
+}
