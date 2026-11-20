@@ -10,6 +10,7 @@
 import React from "react";
 import { Plus, X } from "lucide-react";
 import WorkoutLogger from "../../components/WorkoutLogger";
+import WorkoutPlans from "./WorkoutPlans";
 import { Empty } from "../../components/AppShared";
 
 // ============================================================
@@ -21,9 +22,19 @@ import { Empty } from "../../components/AppShared";
  * @param {Object} props - Existing application state and callbacks.
  * @returns {React.ReactElement} Existing page JSX.
  */
+
 export default function WorkoutsPage({
   userId,
+
+  // 01.02 - Saved workout plan state and actions.
+  workoutPlans = [],
+  workoutPlansLoading = false,
+  workoutPlansBusy = false,
+  onSavePlan,
+  onDeletePlan,
+
   cloudDrafts = [],
+
   cloudDraftsLoading = false,
   onResumeCloudDraft,
   activeWorkout,
@@ -44,9 +55,24 @@ export default function WorkoutsPage({
   busy,
 }) {
       return (
+
       <section className="content">
         {/* ============================================================
+            00. SAVED WORKOUT PLANS
+        ============================================================ */}
+        <WorkoutPlans
+          key={userId}
+          plans={workoutPlans}
+          loading={workoutPlansLoading}
+          exercises={exerciseList}
+          busy={workoutPlansBusy}
+          onSavePlan={onSavePlan}
+          onDeletePlan={onDeletePlan}
+        />
+
+        {/* ============================================================
     00. CLOUD DRAFT DISCOVERY
+
     ============================================================ */}
 
 {(cloudDraftsLoading || cloudDrafts.length > 0) && (

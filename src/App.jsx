@@ -5,6 +5,7 @@ import { normalizeWorkoutHistory } from "./utils/workoutHistory";
 import { fetchBodyweightHistory, saveBodyweightEntry } from "./services/bodyweightService";
 import { fetchCompletedWorkouts,fetchDraftWorkouts, saveWorkoutSession } from "./services/workoutService";
 import { fetchExercises, createExerciseRecord } from "./services/exerciseService";
+import { fetchWorkoutPlans,createWorkoutPlan,updateWorkoutPlan,deleteWorkoutPlan,} from "./services/workoutPlanService";
 import { Home, Dumbbell, CalendarDays, TrendingUp, Settings, Menu, X, LogOut, CircleUserRound } from "lucide-react";
 // ============================================================
 // 01. LAZY-LOADED FEATURE PAGES
@@ -36,8 +37,16 @@ export default function App(){
   const [notice,setNotice] = useState("");
   const [workouts,setWorkouts] = useState([]);
   const [weights,setWeights] = useState([]);
+  
   const [exerciseList,setExerciseList] = useState([]);
+
+  // 02.07 - Saved workout plans for the current account.
+  const [workoutPlans, setWorkoutPlans] = useState([]);
+  const [workoutPlansLoading, setWorkoutPlansLoading] = useState(false);
+  const [workoutPlansBusy, setWorkoutPlansBusy] = useState(false);
+
   const [newExerciseName,setNewExerciseName] = useState("");
+
   const [newExerciseMuscle,setNewExerciseMuscle] = useState("");
   const [showExerciseForm,setShowExerciseForm] = useState(false);
   const [activeWorkout,setActiveWorkout] = useState(null);
@@ -425,7 +434,212 @@ async function signOut() {
   setActiveWorkout(null);
   setShowExerciseForm(false);
 }
+  
+  // ============================================================
+  // 02.08 - LOAD SAVED WORKOUT PLANS
+  // ============================================================
+
+  /**
+   * 02.08 - Load plans whenever the signed-in account changes.
+   * RLS restricts records to the current account.
+   */
+  useEffect(() => {
+    if (!user?.id || !supabase) {
+      setWorkoutPlans([]);
+      setWorkoutPlansLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    setWorkoutPlans([]);
+    setWorkoutPlansLoading(true);
+
+    async function loadPlans() {
+      try {
+        const { data, error } = await fetchWorkoutPlans();
+
+        if (cancelled) return;
+
+        if (error) {
+          setNotice(`Unable to load workout plans: ${error.message}`);
+        } else {
+          setWorkoutPlans(data || []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setNotice(`Unable to load workout plans: ${error.message}`);
+        }
+      } finally {
+        if (!cancelled) {
+          setWorkoutPlansLoading(false);
+        }
+      }
+    }
+
+    loadPlans();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  // ============================================================
+  // 03.04 - WORKOUT PLAN VALIDATION
+  // ============================================================
+
+  /**
+   * 03.04 - Validate plan details before saving to Supabase.
+   * @param {Object} form - Editable workout plan.
+   * @returns {Object} Normalized plan payload.
+   */
+  function validateWorkoutPlan(form) {
+    const name = form.name.trim();
+
+    if (!name || name.length > 120) {
+      throw new Error(
+        "Plan name must be between 1 and 120 characters."
+      );
+    }
+
+    if (!form.exercises.length) {
+      throw new Error("Add at least one exercise to the plan.");
+    }
+
+    const seen = new Set();
+
+    const exercises = form.exercises.map(entry => {
+      if (seen.has(entry.exercise_id)) {
+        throw new Error("A plan cannot contain duplicate exercises.");
+      }
+
+      seen.add(entry.exercise_id);
+
+      if (!exerciseList.some(item =>
+        item.id === entry.exercise_id
+      )) {
+        throw new Error(
+          "One of the selected exercises is no longer available."
+        );
+      }
+
+      const rawSets = String(entry.target_sets ?? "").trim();
+      const targetSets = rawSets === ""
+        ? null
+        : Number(rawSets);
+
+      if (
+        targetSets !== null &&
+        (!Number.isSafeInteger(targetSets) || targetSets <= 0)
+      ) {
+        throw new Error(
+          "Target sets must be a positive whole number."
+        );
+      }
+
+      const targetReps =
+        String(entry.target_reps ?? "").trim() || null;
+
+      return {
+        exercise_id: entry.exercise_id,
+        target_sets: targetSets,
+        target_reps: targetReps,
+      };
+    });
+
+    return {
+      name,
+      notes: form.notes.trim(),
+      exercises,
+    };
+  }
+
+  // ============================================================
+  // 03.05 - SAVE WORKOUT PLAN
+  // ============================================================
+
+  /**
+   * 03.05 - Create or update a saved workout plan.
+   * @param {string|null} planId - Existing ID or null.
+   * @param {Object} form - Plan editor values.
+   */
+  async function savePlan(planId, form) {
+    if (!user?.id || !supabase) {
+      throw new Error("Sign in to save workout plans.");
+    }
+
+    if (workoutPlansBusy) return;
+
+    const validated = validateWorkoutPlan(form);
+
+    setWorkoutPlansBusy(true);
+
+    try {
+      const result = planId
+        ? await updateWorkoutPlan(user.id, planId, validated)
+        : await createWorkoutPlan(user.id, validated);
+
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+
+      const refreshed = await fetchWorkoutPlans();
+
+
+      if (refreshed.error) {
+        throw new Error(
+          "Plan was saved to Supabase, but the list could not refresh. " +
+          "Refresh the page before trying again. " +
+          refreshed.error.message
+        );
+      }
+
+
+      setWorkoutPlans(refreshed.data || []);
+      setNotice(
+        planId ? "Workout plan updated." : "Workout plan created."
+      );
+    } finally {
+      setWorkoutPlansBusy(false);
+    }
+  }
+
+  // ============================================================
+  // 03.06 - DELETE WORKOUT PLAN
+  // ============================================================
+
+  /**
+   * 03.06 - Delete a saved plan after UI confirmation.
+   * @param {string} planId - Plan to delete.
+   */
+  async function removePlan(planId) {
+    if (!user?.id || !supabase) {
+      throw new Error("Sign in to delete workout plans.");
+    }
+
+    if (workoutPlansBusy) return;
+
+    setWorkoutPlansBusy(true);
+
+    try {
+      const { error } = await deleteWorkoutPlan(planId);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setWorkoutPlans(previous =>
+        previous.filter(plan => plan.id !== planId)
+      );
+
+      setNotice("Workout plan deleted.");
+    } finally {
+      setWorkoutPlansBusy(false);
+    }
+  }
+
   async function createExercise(){
+
     const name=newExerciseName.trim();
     if(!name){setNotice("Exercise name is required.");return;}
     if(exerciseList.some(e=>e.name.trim().toLowerCase()===name.toLowerCase())){
@@ -575,8 +789,15 @@ const { data, error } = await saveBodyweightEntry(
 {tab === "Workouts" && (
   <WorkoutsPage
     key={user.id}
+
     userId={user.id}
+    workoutPlans={workoutPlans}
+    workoutPlansLoading={workoutPlansLoading}
+    workoutPlansBusy={workoutPlansBusy}
+    onSavePlan={savePlan}
+    onDeletePlan={removePlan}
     cloudDrafts={cloudDrafts}
+
     cloudDraftsLoading={cloudDraftsLoading}
     onResumeCloudDraft={resumeCloudDraft}
     activeWorkout={activeWorkout}
@@ -587,8 +808,6 @@ const { data, error } = await saveBodyweightEntry(
     muscleFilter={muscleFilter}
     setMuscleFilter={setMuscleFilter}
     emptyWorkout={createEmptyWorkout}
-
-    // 01.01 - Exercise creation controls.
     showExerciseForm={showExerciseForm}
     setShowExerciseForm={setShowExerciseForm}
     newExerciseName={newExerciseName}
