@@ -1,5 +1,9 @@
 import React, { lazy, Suspense, useEffect, useMemo, useState,useRef } from "react";
 import { supabase, isCloudConfigured } from "./supabase";
+import useAuth from "./features/auth/useAuth";
+import AuthPage from "./features/auth/AuthPage";
+import ResetPasswordPage from "./features/auth/ResetPasswordPage";
+import { signOutAccount } from "./services/authService";
 import { getPreviousPerformance } from "./utils/workoutCalculations";
 import { normalizeWorkoutHistory } from "./utils/workoutHistory";
 import { fetchBodyweightHistory, saveBodyweightEntry } from "./services/bodyweightService";
@@ -35,10 +39,12 @@ const emptyWorkout = (userId) => ({
 });
 export default function App(){
   const [tab,setTab] = useState("Overview");
-  const [user,setUser] = useState(null);
-  const [authMode,setAuthMode] = useState("signin");
-  const [email,setEmail] = useState("");
-  const [password,setPassword] = useState("");
+  // 02.14 - Keep authentication state in the dedicated hook.
+  const {
+    user, authLoading, recoveryMode, recoveryReady,
+    recoveryError, finishRecovery, cancelRecovery,
+  } = useAuth();
+  // 02.14.01 - Busy is also used by workout/exercise operations.
   const [busy,setBusy] = useState(false);
   const [notice,setNotice] = useState("");
   const [workouts,setWorkouts] = useState([]);
@@ -254,12 +260,7 @@ useEffect(() => {
   const [muscleFilter,setMuscleFilter] = useState("All");
   const [mobileMenu,setMobileMenu] = useState(false);
 
-  useEffect(()=>{
-    if(!supabase) return;
-    supabase.auth.getSession().then(({data})=>setUser(data.session?.user ?? null));
-    const {data:{subscription}} = supabase.auth.onAuthStateChange((_event,session)=>setUser(session?.user ?? null));
-    return ()=>subscription.unsubscribe();
-  },[]);
+  // 02.15 - Session and recovery events are handled in useAuth.js.
 
   useEffect(()=>{
     if(!user || !supabase) return;
@@ -496,26 +497,17 @@ const previousPerformance = useMemo(
   () => getPreviousPerformance(workouts),
   [workouts]
 );
-  async function auth(){
-    if(!supabase){setNotice("Cloud setup is not connected yet. Follow the Supabase setup guide in the project README.");return;}
-    setBusy(true); setNotice("");
-    const result = authMode==="signup"
-      ? await supabase.auth.signUp({email,password})
-      : await supabase.auth.signInWithPassword({email,password});
-    setBusy(false);
-    if(result.error) setNotice(result.error.message);
-    else setNotice(authMode==="signup" ? "Check your email to confirm your account." : "Signed in.");
-  }
+  // 03.00 - Authentication forms and actions live in features/auth/.
 // 03.01 - Sign out without deleting locally saved workout drafts.
 async function signOut() {
-  const { error } = await supabase.auth.signOut();
+  const { error } = await signOutAccount();
 
   if (error) {
     setNotice(error.message);
     return;
   }
 
-  setUser(null);
+  // 03.01.01 - The auth hook clears the user on SIGNED_OUT.
   setWorkouts([]);
   setWeights([]);
   setExerciseList([]);
@@ -1438,21 +1430,19 @@ setTab("History");
       setWeightSaving(false);
     }
   }
-  if(!user) return <div className="auth-shell">
-    <div className="auth-card">
-      <div className="brand-mark"><Dumbbell size={25}/></div>
-      <div className="eyebrow">YOUR TRAINING, YOUR DATA</div>
-      <h1>Build strength.<br/><span>Track every rep.</span></h1>
-      <p className="muted">Your personal gym log, progress dashboard and training history.</p>
-      <div className="field"><label>Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com"/></div>
-      <div className="field"><label>Password</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="At least 6 characters"/></div>
-      <button className="primary full" disabled={busy || !email || !password} onClick={auth}>{busy?"Please wait…":authMode==="signup"?"Create account":"Sign in"}</button>
-      <button className="link full" onClick={()=>setAuthMode(authMode==="signup"?"signin":"signup")}>{authMode==="signup"?"Already have an account? Sign in":"New here? Create an account"}</button>
-      {!isCloudConfigured && <div className="setup-note"><strong>Setup needed</strong><br/>Connect your free Supabase project using the steps in README.md. The app will then enable secure accounts and cloud sync.</div>}
-      {notice && <div className="notice">{notice}</div>}
-      <div className="auth-foot">IRONLOG <span>•</span> PRIVATE BY DESIGN</div>
-    </div>
-  </div>;
+  // 04.02 - Resolve authentication before rendering account data.
+  if (authLoading) return <div className="auth-shell"><div className="auth-card"><p className="muted">Loading IronLog...</p></div></div>;
+
+  // 04.03 - Recovery takes priority over the signed-in Dashboard.
+  if (recoveryMode) return <ResetPasswordPage
+    recoveryReady={recoveryReady}
+    recoveryError={recoveryError}
+    finishRecovery={finishRecovery}
+    cancelRecovery={cancelRecovery}
+  />;
+
+  // 04.04 - Show login/signup/recovery-request when signed out.
+  if (!user) return <AuthPage />;
 
   // 04.01 - Create workouts for the currently signed-in account.
   const createEmptyWorkout = () => emptyWorkout(user.id);
