@@ -8,9 +8,9 @@
  */
 import React from "react";
 import {
-  Area,
-  AreaChart,
+  LineChart,
   CartesianGrid,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -21,54 +21,104 @@ import {
 // 01. BODYWEIGHT CHART
 // ============================================================
 
+
 /**
- * 01.01 - Render logged bodyweight measurements.
- * @param {{data: Array, large?: boolean}} props
+ * 01.01 - Render morning and bedtime body-weight trends.
+ *
+ * Converts the chart to the preferred display unit.
+ * Missing check-ins remain missing.
+ *
+ * @param {Object} props
  * @returns {React.ReactElement}
  */
-export default function WeightChart({ data, large }) {
-  if (!data.length) {
+export default function WeightChart({
+  data,
+  large = false,
+  unit = "kg",
+  period = "both",
+}) {
+  // 01.02 - Group entries by measurement date.
+  const grouped = new Map();
+
+  for (const entry of data) {
+    if (!["morning", "bedtime"].includes(entry.check_in_type)) {
+      continue;
+    }
+
+    const date = entry.measurement_date;
+    if (!date) continue;
+
+    if (!grouped.has(date)) {
+      grouped.set(date, { date });
+    }
+
+    const value = Number(entry.weight_kg);
+    if (!Number.isFinite(value)) continue;
+
+    grouped.get(date)[entry.check_in_type] = Number(
+      (unit === "lbs" ? value * 2.2046226218 : value)
+        .toFixed(1)
+    );
+  }
+
+  const chart = [...grouped.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(entry => ({
+      ...entry,
+      label: new Date(`${entry.date}T12:00:00`)
+        .toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+        }),
+    }));
+
+  const showMorning = period !== "bedtime";
+  const showBedtime = period !== "morning";
+
+  const hasVisibleData = chart.some(entry =>
+    (showMorning && entry.morning !== undefined) ||
+    (showBedtime && entry.bedtime !== undefined)
+  );
+
+  if (!hasVisibleData) {
     return (
       <div className="chart-empty">
-        Log your first weigh-in to see a chart.
+        No check-ins for this selection yet.
       </div>
     );
   }
 
-  const chart = data.map((x, i) => ({
-    date: new Date(x.logged_at).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-    }),
-    weight: Number(x.weight_kg),
-    i,
-  }));
-
   return (
     <div className={`chart ${large ? "large" : ""}`}>
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={chart}>
-          <defs>
-            <linearGradient id="weightFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#a3e635" stopOpacity={0.24} />
-              <stop offset="100%" stopColor="#a3e635" stopOpacity={0} />
-            </linearGradient>
-          </defs>
+                <LineChart data={chart}>
           <CartesianGrid stroke="#252a35" vertical={false} />
+
           <XAxis
-            dataKey="date"
+            dataKey="label"
             tick={{ fill: "#778091", fontSize: 11 }}
             axisLine={false}
             tickLine={false}
           />
+
           <YAxis
             domain={["dataMin - 1", "dataMax + 1"]}
             tick={{ fill: "#778091", fontSize: 11 }}
             axisLine={false}
             tickLine={false}
-            width={35}
+            width={45}
+            tickFormatter={value => Number(value).toFixed(1)}
           />
+
           <Tooltip
+            formatter={(value, name) => [
+              `${Number(value).toFixed(1)} ${unit}`,
+              name === "morning" ? "Morning" : "Bedtime",
+            ]}
+            labelFormatter={(_label, payload) => {
+              const date = payload?.[0]?.payload?.date;
+              return date || "";
+            }}
             contentStyle={{
               background: "#151923",
               border: "1px solid #303746",
@@ -76,14 +126,33 @@ export default function WeightChart({ data, large }) {
               color: "#fff",
             }}
           />
-          <Area
-            type="monotone"
-            dataKey="weight"
-            stroke="#a3e635"
-            strokeWidth={2.5}
-            fill="url(#weightFill)"
-          />
-        </AreaChart>
+
+          {showMorning && (
+            <Line
+              type="monotone"
+              dataKey="morning"
+              name="morning"
+              stroke="#a3e635"
+              strokeWidth={2.5}
+              dot={{ r: 3 }}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          )}
+
+          {showBedtime && (
+            <Line
+              type="monotone"
+              dataKey="bedtime"
+              name="bedtime"
+              stroke="#60a5fa"
+              strokeWidth={2.5}
+              dot={{ r: 3 }}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          )}
+        </LineChart>
       </ResponsiveContainer>
     </div>
   );

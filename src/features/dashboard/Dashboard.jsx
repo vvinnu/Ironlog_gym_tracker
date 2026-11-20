@@ -23,23 +23,67 @@ const WeightChart = lazy(() => import("../../components/WeightChart")); import {
  * @param {Object} props - Existing application state and callbacks.
  * @returns {React.ReactElement} Existing page JSX.
  */
-export default function Dashboard({ workouts, weights, weekCount, totalVolume, prs, latestWeight, newWeight, setNewWeight, logWeight, setTab, setActiveWorkout, emptyWorkout }) {
-  return (
+export default function Dashboard({
+  workouts,
+  weights,
+  weekCount,
+  totalVolume,
+  prs,
+  latestWeight,
+  weightUnit,
+  setTab,
+  setActiveWorkout,
+  emptyWorkout,
+}) {
+  // 01.02 - Convert the latest morning weight for display.
+  const displayedWeight = latestWeight === null
+    ? null
+    : weightUnit === "lbs"
+      ? latestWeight * 2.2046226218
+      : latestWeight;  return (
       <section className="content">
         <div className="welcome-row"><div><div className="eyebrow">{new Date().toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})}</div><h1>Let's get <span>stronger.</span></h1><p className="muted">Small improvements add up. Keep showing up.</p></div><button className="primary" onClick={()=>{setActiveWorkout(emptyWorkout());setTab("Workouts")}}><Plus size={18}/> Start workout</button></div>
         <div className="stats-grid">
           <Stat icon={Dumbbell} label="Workouts this week" value={weekCount} suffix="/ 5" trend="Consistency is key"/>
           <Stat icon={Activity} label="Total volume logged" value={fmt(totalVolume)} suffix="kg" trend="Weight × reps"/>
           <Stat icon={Trophy} label="Exercise records" value={Object.keys(prs).length} trend="Exercises tracked"/>
-          <Stat icon={Weight} label="Latest body weight" value={latestWeight?fmt(latestWeight):"—"} suffix={latestWeight?"kg":""} trend="Log a weigh-in"/>
-        </div>
+      <Stat
+  icon={Weight}
+  label="Latest morning weight"
+  value={displayedWeight === null ? "—" : displayedWeight.toFixed(1)}
+  suffix={displayedWeight === null ? "" : weightUnit}
+  trend="Morning weight trend"
+/>  </div>
         <div className="two-col">
           <div className="panel"><div className="panel-head"><div><div className="eyebrow">YOUR ACTIVITY</div><h2>Recent workouts</h2></div><button className="text-btn" onClick={()=>setTab("History")}>View history <ChevronRight size={15}/></button></div>
             {workouts.slice(0,4).length?workouts.slice(0,4).map(w=><WorkoutRow key={w.id} workout={w}/>):<Empty title="Your training history starts here" text="Log your first session to see it appear on your dashboard."/>}
           </div>
-          <div className="panel"><div className="panel-head"><div><div className="eyebrow">QUICK CHECK-IN</div><h2>Body weight</h2></div><Weight size={19} className="dim"/></div><div className="weight-entry"><input type="number" step="0.1" placeholder="e.g. 63.5" value={newWeight} onChange={e=>setNewWeight(e.target.value)}/><span>kg</span><button className="primary compact" onClick={logWeight}><Plus size={16}/> Log</button></div><p className="muted small">Track your trend over time, not daily fluctuations.</p><Suspense fallback={<div className="chart-empty">Loading chart...</div>}>
-  <WeightChart data={weights} />
-</Suspense></div>
+          <div className="panel">
+  <div className="panel-head">
+    <div>
+      <div className="eyebrow">BODY WEIGHT</div>
+      <h2>Weight trend</h2>
+    </div>
+
+    <button
+      type="button"
+      className="text-btn"
+      onClick={() => setTab("Progress")}
+    >
+      Check in <ChevronRight size={15} />
+    </button>
+  </div>
+
+  <p className="muted small">
+    Track morning and bedtime weight separately.
+  </p>
+
+  <Suspense
+    fallback={<div className="chart-empty">Loading chart...</div>}
+  >
+    <WeightChart data={weights} unit={weightUnit} />
+  </Suspense>
+</div>
         </div>
         <div className="panel"><div className="panel-head"><div><div className="eyebrow">STRENGTH SNAPSHOT</div><h2>Top exercise weights</h2></div></div>
           {Object.keys(prs).length?<div className="record-grid">{Object.entries(prs).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([n,v])=><div className="record" key={n}><span>{n}</span><b>{fmt(v)} <small>kg</small></b></div>)}</div>:<Empty title="No records yet" text="Your best working weights will show here once you log sets."/>}

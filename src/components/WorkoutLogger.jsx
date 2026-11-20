@@ -168,6 +168,21 @@ useEffect(() => {
     }));
   };
 
+  /**
+   * 02.01 - Toggle previous workout notes for one exercise.
+   *
+   * Notes are read-only and belong to the same historical
+   * workout used for the previous performance reference.
+   *
+   * @param {string} cardId - Current exercise card ID.
+   */
+  const togglePreviousNotes = cardId => {
+    updateCard(cardId, card => ({
+      ...card,
+      previousNotesExpanded: !card.previousNotesExpanded,
+    }));
+  };
+
   const prepareSets = card => {
     const filled = row =>
       row.weight.trim() !== "" ||
@@ -495,6 +510,77 @@ useEffect(() => {
                           >
                             No previous performance recorded.
                           </p>
+                        )}
+
+                        {/* 02.02 - Optional notes from the
+                            same previous workout session. */}
+                        {previous && (
+                          <div
+                            className="ironlog-previous-notes"
+                            style={{
+                              marginTop: "14px",
+                              paddingTop: "12px",
+                              borderTop: "1px solid #303746",
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() =>
+                                togglePreviousNotes(card.id)
+                              }
+                              aria-expanded={
+                                Boolean(card.previousNotesExpanded)
+                              }
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: "12px",
+                                width: "100%",
+                                padding: "8px 0",
+                                background: "transparent",
+                                border: "none",
+                                color: "#c9d2df",
+                                cursor: "pointer",
+                                textAlign: "left",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: "13px",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                Previous workout notes
+                              </span>
+
+                              {card.previousNotesExpanded ? (
+                                <ChevronUp size={16} />
+                              ) : (
+                                <ChevronDown size={16} />
+                              )}
+                            </button>
+
+                            {card.previousNotesExpanded && (
+                              <div
+                                style={{
+                                  padding: "12px",
+                                  marginTop: "6px",
+                                  background: "#0e141d",
+                                  border: "1px solid #303746",
+                                  borderRadius: "8px",
+                                  color: "#c9d2df",
+                                  fontSize: "13px",
+                                  lineHeight: 1.6,
+                                  whiteSpace: "pre-wrap",
+                                  overflowWrap: "anywhere",
+                                }}
+                              >
+                                {previous.workout_notes.trim() ||
+                                  "No notes recorded for this session."}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
                     )}

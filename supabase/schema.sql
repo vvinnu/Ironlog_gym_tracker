@@ -348,6 +348,10 @@ ON public.workout_sets(workout_exercise_id);
 
 -- ============================================================
 -- 10. BODYWEIGHT LOGS
+--
+-- Supports morning and bedtime weight check-ins.
+-- All weights are stored in kilograms.
+-- Users may enter and display weights in kg or lbs.
 -- ============================================================
 
 CREATE TABLE public.bodyweight_logs (
@@ -356,14 +360,31 @@ CREATE TABLE public.bodyweight_logs (
     user_id uuid NOT NULL
         REFERENCES auth.users(id) ON DELETE CASCADE,
 
-    weight_kg numeric(6,2) NOT NULL
+    -- 01. Store weight in kilograms regardless of input unit.
+    weight_kg numeric(8,4) NOT NULL
         CHECK (weight_kg > 0),
 
-    logged_at timestamptz NOT NULL DEFAULT now()
+    -- 02. Actual date the user measured their weight.
+    measurement_date date NOT NULL DEFAULT current_date,
+
+    -- 03. Morning or bedtime measurement.
+    check_in_type text NOT NULL
+        CHECK (check_in_type IN ('morning', 'bedtime')),
+
+    -- 04. Timestamp when the entry was created.
+    logged_at timestamptz NOT NULL DEFAULT now(),
+
+    -- 05. Prevent duplicate check-ins for the same date.
+    CONSTRAINT bodyweight_unique_daily_checkin
+        UNIQUE (user_id, measurement_date, check_in_type)
 );
 
+-- 06. Optimize retrieval of body-weight history.
 CREATE INDEX bodyweight_user_date_idx
-ON public.bodyweight_logs(user_id, logged_at DESC);
+ON public.bodyweight_logs(
+    user_id,
+    measurement_date DESC
+);
 
 -- ============================================================
 -- 11. AUTOMATIC UPDATED_AT

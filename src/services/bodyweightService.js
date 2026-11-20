@@ -51,7 +51,8 @@ export async function fetchBodyweightHistory() {
   return supabase
     .from("bodyweight_logs")
     .select("*")
-    .order("logged_at", { ascending: true });
+    .order("measurement_date", { ascending: true })
+    .order("check_in_type", { ascending: true });
 }
 
 // ============================================================
@@ -59,35 +60,37 @@ export async function fetchBodyweightHistory() {
 // ============================================================
 
 /**
- * 02.01 - SAVE BODYWEIGHT ENTRY
+ * 02.01 - SAVE OR UPDATE BODYWEIGHT CHECK-IN
  *
- * Purpose:
- * Saves a new bodyweight measurement.
+ * Stores all measurements in kilograms.
+ * A user can have one morning and one bedtime
+ * measurement per calendar date.
  *
- * How it works:
- * 1. Receives the authenticated user's ID.
- * 2. Receives the validated weight in kilograms.
- * 3. Inserts the measurement into bodyweight_logs.
- * 4. Returns the newly created record.
- *
- * Used by:
- * - App.jsx through its logWeight handler.
- *
- * Important:
- * - Weight validation remains in App.jsx.
- * - The database must also authorize the operation.
- *
- * @param {string} userId - Authenticated user's ID.
- * @param {number} weightKg - Bodyweight in kilograms.
- * @returns {Promise<Object>} Supabase result containing data/error.
+ * @param {string} userId - Authenticated account.
+ * @param {number} weightKg - Converted weight in kg.
+ * @param {string} measurementDate - YYYY-MM-DD.
+ * @param {"morning"|"bedtime"} checkInType
+ * @returns {Promise<Object>} Supabase result.
  */
-export async function saveBodyweightEntry(userId, weightKg) {
+export async function saveBodyweightEntry(
+  userId,
+  weightKg,
+  measurementDate,
+  checkInType
+) {
   return supabase
     .from("bodyweight_logs")
-    .insert({
-      user_id: userId,
-      weight_kg: weightKg,
-    })
+    .upsert(
+      {
+        user_id: userId,
+        weight_kg: weightKg,
+        measurement_date: measurementDate,
+        check_in_type: checkInType,
+      },
+      {
+        onConflict: "user_id,measurement_date,check_in_type",
+      }
+    )
     .select()
     .single();
 }

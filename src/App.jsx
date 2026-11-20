@@ -229,7 +229,28 @@ useEffect(() => {
   };
 }, [user?.id]);
 
-  const [newWeight,setNewWeight] = useState("");
+  // 02.11 - Body-weight display preference.
+  const [weightUnit, setWeightUnit] = useState(() => {
+    try {
+      return localStorage.getItem("ironlog-weight-unit") === "lbs"
+        ? "lbs"
+        : "kg";
+    } catch {
+      return "kg";
+    }
+  });
+
+  // 02.12 - Prevent duplicate check-in submissions.
+  const [weightSaving, setWeightSaving] = useState(false);
+
+  // 02.13 - Persist the preferred display unit.
+  useEffect(() => {
+    try {
+      localStorage.setItem("ironlog-weight-unit", weightUnit);
+    } catch {
+      // The app can continue without local preferences.
+    }
+  }, [weightUnit]);
   const [muscleFilter,setMuscleFilter] = useState("All");
   const [mobileMenu,setMobileMenu] = useState(false);
 
@@ -455,8 +476,17 @@ async function resumeCloudDraft(draft) {
   const prs = useMemo(()=>{
     const map={}; allSets.forEach(s=>{const n=s.exercise_name; map[n]=Math.max(map[n]||0,Number(s.weight_kg)||0)}); return map;
   },[workouts]);
-  const latestWeight = weights.length ? Number(weights[weights.length-1].weight_kg) : null;
-  const weekCount = workouts.filter(w=>(Date.now()-new Date(w.workout_date+"T12:00:00").getTime())<7*86400000).length;
+  // 02.14 - Prefer the latest morning measurement for
+  // the Dashboard's body-weight summary.
+  const latestMorningWeight = [...weights]
+    .filter(entry => entry.check_in_type === "morning")
+    .sort((a, b) =>
+      b.measurement_date.localeCompare(a.measurement_date)
+    )[0];
+
+  const latestWeight = latestMorningWeight
+    ? Number(latestMorningWeight.weight_kg)
+    : null;  const weekCount = workouts.filter(w=>(Date.now()-new Date(w.workout_date+"T12:00:00").getTime())<7*86400000).length;
 
 /**
  * Previous completed performance for each exercise.
@@ -1310,19 +1340,104 @@ setTab("History");
 
     return data;
   }
-  async function logWeight(){
-    const value=Number(newWeight);
-    if(!value || value<20 || value>400) return setNotice("Enter a valid body weight in kg.");
-    if(!supabase || !user) return setNotice("Connect Supabase and sign in to save body weight entries.");
-// 03.01 - Save the validated bodyweight measurement.
-// See: src/services/bodyweightService.js
-const { data, error } = await saveBodyweightEntry(
-  user.id,
-  value
-);
-    if(error) setNotice(error.message); else {setWeights(p=>[...p,data]);setNewWeight("");setNotice("Body weight saved.");}
-  }
+  /**
+   * 03.01 - Save or update a dated body-weight check-in.
+   *
+   * Converts pounds to kilograms before persistence.
+   * Refreshes local state without duplicating the entry.
+   *
+   * @param {Object} entry - Check-in form values.
+   * @returns {Promise<boolean>} Whether saving succeeded.
+   */
+  async function logWeight(entry) {
+    if (weightSaving) return false;
 
+    const value = Number(entry.weight);
+    const weightKg = entry.unit === "lbs"
+      ? value / 2.2046226218
+      : value;
+
+    if (
+      !Number.isFinite(value) ||
+      value <= 0 ||
+      weightKg < 20 ||
+      weightKg > 400
+    ) {
+      setNotice("Enter a valid body weight.");
+      return false;
+    }
+
+    // 03.01.02 - Validate the actual calendar date.
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    const parsedDate = datePattern.test(entry.date || "")
+      ? new Date(`${entry.date}T12:00:00`)
+      : null;
+
+    const validDate =
+      parsedDate !== null &&
+      !Number.isNaN(parsedDate.getTime()) &&
+      parsedDate.getFullYear() === Number(entry.date.slice(0, 4)) &&
+      parsedDate.getMonth() + 1 === Number(entry.date.slice(5, 7)) &&
+      parsedDate.getDate() === Number(entry.date.slice(8, 10));
+
+    const now = new Date();
+    const todayLocal = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, "0"),
+      String(now.getDate()).padStart(2, "0"),
+    ].join("-");
+
+    if (!validDate || entry.date > todayLocal) {
+      setNotice("Enter a valid check-in date, not in the future.");
+      return false;
+    }
+
+    if (!["morning", "bedtime"].includes(entry.type)) {
+      setNotice("Select Morning or Bedtime.");
+      return false;
+    }
+
+    if (!supabase || !user) {
+      setNotice("Sign in to save body weight.");
+      return false;
+    }
+
+    setWeightSaving(true);
+
+    try {
+      const { data, error } = await saveBodyweightEntry(
+        user.id,
+        Number(weightKg.toFixed(4)),
+        entry.date,
+        entry.type
+      );
+
+      if (error) throw error;
+
+      // 03.01.01 - Replace an existing matching check-in.
+      setWeights(previous => [
+        ...previous.filter(item =>
+          !(
+            item.user_id === data.user_id &&
+            item.measurement_date === data.measurement_date &&
+            item.check_in_type === data.check_in_type
+          )
+        ),
+        data,
+      ].sort((a, b) =>
+        a.measurement_date.localeCompare(b.measurement_date) ||
+        a.check_in_type.localeCompare(b.check_in_type)
+      ));
+
+      setNotice("Body weight saved.");
+      return true;
+    } catch (error) {
+      setNotice(`Unable to save body weight: ${error.message}`);
+      return false;
+    } finally {
+      setWeightSaving(false);
+    }
+  }
   if(!user) return <div className="auth-shell">
     <div className="auth-card">
       <div className="brand-mark"><Dumbbell size={25}/></div>
@@ -1394,9 +1509,8 @@ const { data, error } = await saveBodyweightEntry(
   {tab==="Overview" && <Dashboard
         workouts={workouts} weights={weights} weekCount={weekCount}
         totalVolume={totalVolume} prs={prs} latestWeight={latestWeight}
-        newWeight={newWeight} setNewWeight={setNewWeight} logWeight={logWeight}
-        setTab={setTab} setActiveWorkout={setActiveWorkout} emptyWorkout={createEmptyWorkout}
-      />}      
+        weightUnit={weightUnit} setTab={setTab}
+        setActiveWorkout={setActiveWorkout} emptyWorkout={createEmptyWorkout}      />}      
       
 {tab === "Workouts" && (
   <WorkoutsPage
@@ -1444,9 +1558,15 @@ const { data, error } = await saveBodyweightEntry(
         setTab={setTab} emptyWorkout={createEmptyWorkout}
       />}
 {tab==="Progress" && <ProgressPage
-        workouts={workouts} weights={weights} totalVolume={totalVolume} prs={prs}
-      />}
-{tab==="Settings" && <SettingsPage user={user} signOut={signOut} />}
+        workouts={workouts}
+        weights={weights}
+        totalVolume={totalVolume}
+        prs={prs}
+        weightUnit={weightUnit}
+        setWeightUnit={setWeightUnit}
+        logWeight={logWeight}
+        weightSaving={weightSaving}
+      />}{tab==="Settings" && <SettingsPage user={user} signOut={signOut} />}
 </Suspense>
       <footer>IRONLOG <span>•</span> BUILT FOR YOUR NEXT REP</footer>
     </main>

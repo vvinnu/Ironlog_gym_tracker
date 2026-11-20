@@ -51,9 +51,12 @@ export function getPreviousPerformance(workouts) {
     for (const [exerciseId, sets] of Object.entries(groupedExercises)) {
       if (latest[exerciseId]) continue;
 
+      // 01.02 - Keep notes from the same completed session
+      // that supplied this exercise's previous sets.
       latest[exerciseId] = {
         workout_date: workout.workout_date,
         workout_name: workout.name,
+        workout_notes: workout.notes || "",
         sets: sets.sort((a, b) => a.set_number - b.set_number),
       };
     }
