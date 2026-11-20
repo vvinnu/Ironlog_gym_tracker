@@ -1,9 +1,9 @@
-import React, { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useState,useRef } from "react";
 import { supabase, isCloudConfigured } from "./supabase";
 import { getPreviousPerformance } from "./utils/workoutCalculations";
 import { normalizeWorkoutHistory } from "./utils/workoutHistory";
 import { fetchBodyweightHistory, saveBodyweightEntry } from "./services/bodyweightService";
-import { fetchCompletedWorkouts, saveWorkoutSession } from "./services/workoutService";
+import { fetchCompletedWorkouts,fetchDraftWorkouts, saveWorkoutSession } from "./services/workoutService";
 import { fetchExercises, createExerciseRecord } from "./services/exerciseService";
 import { Home, Dumbbell, CalendarDays, TrendingUp, Settings, Menu, X, LogOut, CircleUserRound } from "lucide-react";
 // ============================================================
@@ -17,8 +17,15 @@ const ProgressPage = lazy(() => import("./features/progress/ProgressPage"));
 const SettingsPage = lazy(() => import("./features/settings/SettingsPage"));
 const dateKey = d => new Date(d).toISOString().slice(0,10);
 const today = dateKey(new Date());
-const emptyWorkout = () => ({id:crypto.randomUUID(), workout_date:today, name:"Workout", notes:"", sets:[]});
-
+// 01.01 - Create a workout associated with its account.
+const emptyWorkout = (userId) => ({
+  id: crypto.randomUUID(),
+  owner_user_id: userId,
+  workout_date: today,
+  name: "Workout",
+  notes: "",
+  sets: [],
+});
 export default function App(){
   const [tab,setTab] = useState("Overview");
   const [user,setUser] = useState(null);
@@ -34,6 +41,127 @@ export default function App(){
   const [newExerciseMuscle,setNewExerciseMuscle] = useState("");
   const [showExerciseForm,setShowExerciseForm] = useState(false);
   const [activeWorkout,setActiveWorkout] = useState(null);
+  // 02.04 - Unfinished sessions available in Supabase.
+const [cloudDrafts, setCloudDrafts] = useState([]);
+const [cloudDraftsLoading, setCloudDraftsLoading] = useState(false);
+  // ============================================================
+// 02. LOCAL WORKOUT METADATA RECOVERY
+// ============================================================
+
+// 02.01 - Track which account's draft has been loaded.
+const restoredDraftUser = useRef(null);
+
+// 02.02 - Restore workout metadata when the account changes.
+useEffect(() => {
+  if (!user?.id) {
+    restoredDraftUser.current = null;
+    setActiveWorkout(null);
+    return;
+  }
+
+  const key = `ironlog-active-workout:${user.id}`;
+  let restored = null;
+
+  try {
+    const saved = localStorage.getItem(key);
+
+    if (saved) {
+      const parsed = JSON.parse(saved);
+
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        typeof parsed.name === "string" &&
+        typeof parsed.workout_date === "string" &&
+        (!parsed.owner_user_id ||
+          parsed.owner_user_id === user.id)
+      ) {
+        // 02.02.01 - Upgrade older account-specific drafts.
+        restored = {
+          ...parsed,
+          owner_user_id: user.id,
+        };
+      }
+    }
+  } catch {
+    setNotice("Unable to restore the saved workout metadata.");
+  }
+
+  restoredDraftUser.current = user.id;
+  setActiveWorkout(restored);
+}, [user?.id]);
+
+// 02.03 - Persist metadata only for the correct account.
+useEffect(() => {
+  if (!user?.id || restoredDraftUser.current !== user.id) {
+    return;
+  }
+
+  // 02.03.01 - Never persist metadata from another account.
+  if (!activeWorkout || activeWorkout.owner_user_id !== user.id) {
+    return;
+  }
+
+  try {
+    localStorage.setItem(
+      `ironlog-active-workout:${user.id}`,
+      JSON.stringify(activeWorkout)
+    );
+  } catch {
+    setNotice("Unable to save workout metadata locally.");
+  }
+}, [activeWorkout, user?.id]);
+
+// ============================================================
+// 02.05 - LOAD UNFINISHED CLOUD WORKOUTS
+// ============================================================
+
+/**
+ * 02.05 - Discover unfinished workouts saved to Supabase.
+ * This does not modify or overwrite the local workout.
+ */
+useEffect(() => {
+  if (!user?.id || !supabase) {
+    setCloudDrafts([]);
+    setCloudDraftsLoading(false);
+    return;
+  }
+
+  let cancelled = false;
+
+  async function loadCloudDrafts() {
+    setCloudDrafts([]);
+    setCloudDraftsLoading(true);
+
+    try {
+      const { data, error } = await fetchDraftWorkouts();
+
+      if (cancelled) return;
+
+      if (error) {
+        setNotice(`Unable to load cloud drafts: ${error.message}`);
+        return;
+      }
+
+      setCloudDrafts(data || []);
+    } catch (error) {
+      if (!cancelled) {
+        setNotice(`Unable to load cloud drafts: ${error.message}`);
+      }
+    } finally {
+      if (!cancelled) {
+        setCloudDraftsLoading(false);
+      }
+    }
+  }
+
+  loadCloudDrafts();
+
+  return () => {
+    cancelled = true;
+  };
+}, [user?.id]);
+
   const [newWeight,setNewWeight] = useState("");
   const [muscleFilter,setMuscleFilter] = useState("All");
   const [mobileMenu,setMobileMenu] = useState(false);
@@ -85,6 +213,175 @@ if (e.error) {
     })();
     return ()=>{alive=false};
   },[user]);
+
+// ============================================================
+// 02.06 - RESTORE A CLOUD WORKOUT DRAFT
+// ============================================================
+
+/**
+ * 02.06 - Reconstruct a Supabase draft for the workout logger.
+ * Requires confirmation before replacing local workout data.
+ *
+ * @param {Object} draft - Selected Supabase workout draft.
+ */
+async function resumeCloudDraft(draft) {
+  if (!user?.id || !draft?.id || !supabase) return;
+
+  // 02.06.00 - Verify the cloud draft is still current.
+  try {
+    const { data: latestDraft, error } = await supabase
+      .from("workouts")
+      .select("id, status, updated_at")
+      .eq("id", draft.id)
+      .single();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (
+      latestDraft.status !== "draft" ||
+      latestDraft.updated_at !== draft.updated_at
+    ) {
+      setNotice(
+        "This cloud workout has changed on another device. " +
+        "Refresh the page before resuming it."
+      );
+      return;
+    }
+  } catch (error) {
+    setNotice(
+      `Unable to verify cloud workout: ${error.message}`
+    );
+    return;
+  }
+
+  // 02.06.01 - Check for existing local workout data.
+  const metadataKey = `ironlog-active-workout:${user.id}`;
+  const cardsKey = `ironlog-workout-draft:${user.id}`;
+
+  let existingCards = [];
+
+  try {
+    const storedCards = localStorage.getItem(cardsKey);
+    const parsedCards = storedCards
+      ? JSON.parse(storedCards)
+      : [];
+
+    existingCards = Array.isArray(parsedCards)
+      ? parsedCards
+      : [];
+  } catch {
+    setNotice("Unable to inspect the local workout draft.");
+    return;
+  }
+
+  const hasLocalWorkout = Boolean(activeWorkout) ||
+    existingCards.length > 0;
+
+  if (hasLocalWorkout) {
+    const confirmed = window.confirm(
+      "Resume this cloud workout? " +
+      "Your current local workout and its exercise entries " +
+      "will be replaced. Unsaved local changes will be lost."
+    );
+
+    if (!confirmed) return;
+  }
+
+  // 02.06.02 - Reject measurements the logger cannot edit.
+  const hasUnsupportedSets = (draft.workout_exercises || [])
+    .some(exercise =>
+      (exercise.workout_sets || []).some(set =>
+        set.duration_seconds != null ||
+        set.distance_km != null
+      )
+    );
+
+  if (hasUnsupportedSets) {
+    setNotice(
+      "This cloud workout contains duration or distance data " +
+      "that the current logger cannot safely restore."
+    );
+    return;
+  }
+
+  // 02.06.03 - Convert cloud exercises into logger cards.
+  const recoveredCards = [...(draft.workout_exercises || [])]
+    .sort((a, b) => a.position - b.position)
+    .map(exercise => ({
+      id: crypto.randomUUID(),
+      exercise_id: exercise.exercise_id,
+      name: exercise.exercise_name,
+      rows: [...(exercise.workout_sets || [])]
+        .sort((a, b) => a.set_number - b.set_number)
+        .map(set => ({
+          id: crypto.randomUUID(),
+          weight: set.weight_kg == null
+            ? ""
+            : String(set.weight_kg),
+          reps: set.reps == null
+            ? ""
+            : String(set.reps),
+        })),
+      collapsed: false,
+      previousCollapsed: false,
+      saved: true,
+    }));
+
+  // 02.06.03 - Preserve the cloud ID for subsequent saves.
+  const recoveredWorkout = {
+    id: crypto.randomUUID(),
+    owner_user_id: user.id,
+    cloud_id: draft.id,
+    name: draft.name,
+    workout_date: draft.workout_date,
+    notes: draft.notes || "",
+    sets: [],
+  };
+
+  // 02.06.04 - Persist recovery with rollback on storage failure.
+  let previousCards;
+  let previousMetadata;
+
+  try {
+    previousCards = localStorage.getItem(cardsKey);
+    previousMetadata = localStorage.getItem(metadataKey);
+
+    localStorage.setItem(
+      cardsKey,
+      JSON.stringify(recoveredCards)
+    );
+
+    localStorage.setItem(
+      metadataKey,
+      JSON.stringify(recoveredWorkout)
+    );
+  } catch {
+    try {
+      if (previousCards === null) {
+        localStorage.removeItem(cardsKey);
+      } else if (previousCards !== undefined) {
+        localStorage.setItem(cardsKey, previousCards);
+      }
+
+      if (previousMetadata === null) {
+        localStorage.removeItem(metadataKey);
+      } else if (previousMetadata !== undefined) {
+        localStorage.setItem(metadataKey, previousMetadata);
+      }
+    } catch {
+      setNotice("Recovery failed and local draft rollback was unsuccessful.");
+      return;
+    }
+
+    setNotice("Unable to store the recovered cloud workout locally.");
+    return;
+  }
+
+  setActiveWorkout(recoveredWorkout);
+  setNotice(`Cloud workout "${draft.name}" restored.`);
+}
 
   const allSets = workouts.flatMap(w=>(w.sets||[]).map(s=>({...s,workout_date:w.workout_date})));
   const totalVolume = allSets.reduce((a,s)=>a+(Number(s.weight_kg)||0)*(Number(s.reps)||0),0);
@@ -175,6 +472,18 @@ const { data, error } = await saveWorkoutSession(
           : previous
       );
 
+      // 03.01.01 - Refresh cloud drafts after saving.
+      const { data: drafts, error: draftsError } =
+        await fetchDraftWorkouts();
+
+      if (draftsError) {
+        setNotice(
+          `Workout saved, but cloud drafts could not refresh: ${draftsError.message}`
+        );
+      } else {
+        setCloudDrafts(drafts || []);
+      }
+
       return data;
     }
 
@@ -194,8 +503,21 @@ setWorkouts(normalizeWorkoutHistory(completed));
       setNotice("Workout saved to Supabase.");
     }
 
-    setActiveWorkout(null);
-    setTab("History");
+// 03.03 - Clear completed workout metadata.
+try {
+  localStorage.removeItem(`ironlog-active-workout:${user.id}`);
+} catch {
+  setNotice("Workout completed, but local metadata cleanup failed.");
+}
+
+setActiveWorkout(null);
+
+// 03.03.01 - Remove the completed workout from cloud drafts.
+setCloudDrafts(previous =>
+  previous.filter(draft => draft.id !== data)
+);
+
+setTab("History");
 
     return data;
   }
@@ -228,6 +550,9 @@ const { data, error } = await saveBodyweightEntry(
     </div>
   </div>;
 
+  // 04.01 - Create workouts for the currently signed-in account.
+  const createEmptyWorkout = () => emptyWorkout(user.id);
+
   const nav=[["Overview",Home],["Workouts",Dumbbell],["History",CalendarDays],["Progress",TrendingUp],["Settings",Settings]];
   return <div className="app-shell">
     <aside className={`sidebar ${mobileMenu?"open":""}`}>
@@ -244,13 +569,16 @@ const { data, error } = await saveBodyweightEntry(
         workouts={workouts} weights={weights} weekCount={weekCount}
         totalVolume={totalVolume} prs={prs} latestWeight={latestWeight}
         newWeight={newWeight} setNewWeight={setNewWeight} logWeight={logWeight}
-        setTab={setTab} setActiveWorkout={setActiveWorkout} emptyWorkout={emptyWorkout}
+        setTab={setTab} setActiveWorkout={setActiveWorkout} emptyWorkout={createEmptyWorkout}
       />}      
       
 {tab === "Workouts" && (
   <WorkoutsPage
     key={user.id}
     userId={user.id}
+    cloudDrafts={cloudDrafts}
+    cloudDraftsLoading={cloudDraftsLoading}
+    onResumeCloudDraft={resumeCloudDraft}
     activeWorkout={activeWorkout}
     setActiveWorkout={setActiveWorkout}
     exerciseList={exerciseList}
@@ -258,7 +586,7 @@ const { data, error } = await saveBodyweightEntry(
     saveSession={saveSession}
     muscleFilter={muscleFilter}
     setMuscleFilter={setMuscleFilter}
-    emptyWorkout={emptyWorkout}
+    emptyWorkout={createEmptyWorkout}
 
     // 01.01 - Exercise creation controls.
     showExerciseForm={showExerciseForm}
@@ -274,7 +602,7 @@ const { data, error } = await saveBodyweightEntry(
 
 {tab==="History" && <HistoryPage
         workouts={workouts} setActiveWorkout={setActiveWorkout}
-        setTab={setTab} emptyWorkout={emptyWorkout}
+        setTab={setTab} emptyWorkout={createEmptyWorkout}
       />}
 {tab==="Progress" && <ProgressPage
         workouts={workouts} weights={weights} totalVolume={totalVolume} prs={prs}

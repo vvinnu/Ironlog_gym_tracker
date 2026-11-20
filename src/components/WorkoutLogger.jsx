@@ -14,6 +14,7 @@ export default function WorkoutLogger({
   userId,
   exercises,
   previousPerformance = {},
+  initialCards = null,
   onSaveExercise,
   onSaveWorkout,
 }) {
@@ -24,8 +25,12 @@ export default function WorkoutLogger({
 // 01.01 - Each account uses a separate localStorage key.
 const draftKey = `ironlog-workout-draft:${userId}`;
 
-// 01.02 - Restore the current user's unfinished workout.
+// 01.02 - Restore cloud cards when provided; otherwise use local draft.
 const [cards, setCards] = useState(() => {
+  if (Array.isArray(initialCards)) {
+    return initialCards;
+  }
+
   try {
     const saved = localStorage.getItem(draftKey);
     const parsed = saved ? JSON.parse(saved) : [];
@@ -35,7 +40,6 @@ const [cards, setCards] = useState(() => {
     return [];
   }
 });
-
 // 01.03 - Workout logger UI state.
 const [search, setSearch] = useState("");
 const [message, setMessage] = useState("");

@@ -81,6 +81,42 @@ export async function fetchCompletedWorkouts() {
 }
 
 // ============================================================
+// 01.02 - FETCH UNFINISHED CLOUD WORKOUTS
+// ============================================================
+
+/**
+ * Retrieves the signed-in user's cloud drafts,
+ * including exercise cards and recorded sets.
+ *
+ * @returns {Promise<Object>} Supabase result.
+ */
+export async function fetchDraftWorkouts() {
+  return supabase
+    .from("workouts")
+    .select(`
+      id,
+      name,
+      workout_date,
+      notes,
+      updated_at,
+      workout_exercises (
+        exercise_id,
+        exercise_name,
+        position,
+        workout_sets (
+          set_number,
+          weight_kg,
+          reps,
+          duration_seconds,
+          distance_km
+        )
+      )
+    `)
+    .eq("status", "draft")
+    .order("updated_at", { ascending: false });
+}
+
+// ============================================================
 // 02. WORKOUT SESSION PERSISTENCE
 // ============================================================
 

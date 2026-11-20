@@ -23,6 +23,9 @@ import { Empty } from "../../components/AppShared";
  */
 export default function WorkoutsPage({
   userId,
+  cloudDrafts = [],
+  cloudDraftsLoading = false,
+  onResumeCloudDraft,
   activeWorkout,
   setActiveWorkout,
   exerciseList,
@@ -42,6 +45,51 @@ export default function WorkoutsPage({
 }) {
       return (
       <section className="content">
+        {/* ============================================================
+    00. CLOUD DRAFT DISCOVERY
+    ============================================================ */}
+
+{(cloudDraftsLoading || cloudDrafts.length > 0) && (
+  <div className="panel">
+    <div className="panel-head">
+      <div>
+        <div className="eyebrow">CLOUD RECOVERY</div>
+        <h2>Unfinished cloud workouts</h2>
+      </div>
+    </div>
+
+    {cloudDraftsLoading ? (
+      <p className="muted">Checking Supabase for drafts...</p>
+    ) : (
+      <>
+<p className="muted">
+  Resume a workout saved to Supabase.
+  Replacing an existing local workout requires confirmation.
+</p>
+
+        {cloudDrafts.map(draft => (
+          <div key={draft.id} className="field">
+            <strong>{draft.name}</strong>
+            <small className="muted">
+              {draft.workout_date}
+              {" · "}
+              {draft.workout_exercises?.length || 0} exercises
+            </small>
+
+            {/* 00.01 - Resume a selected cloud workout. */}
+            <button
+              type="button"
+              className="primary"
+              onClick={() => onResumeCloudDraft(draft)}
+            >
+              Resume Workout
+            </button>
+          </div>
+        ))}
+      </>
+    )}
+  </div>
+)}
         <div className="welcome-row"><div><div className="eyebrow">SESSION LOGGER</div><h1>Workout <span>builder.</span></h1><p className="muted">Record each working set as you train.</p></div>{!activeWorkout&&<button className="primary" onClick={()=>setActiveWorkout(emptyWorkout())}><Plus size={18}/> New workout</button>}</div>
 {activeWorkout ? (
   <div className="panel workout-builder">
@@ -54,15 +102,27 @@ export default function WorkoutsPage({
       <button
         className="icon-btn"
         title="Close workout preview"
-        onClick={() => {
-          if (
-            window.confirm(
-              "Close this workout preview? Unsaved entries will be lost."
-            )
-          ) {
-            setActiveWorkout(null);
-          }
-        }}
+onClick={() => {
+  const confirmed = window.confirm(
+    "Discard this local workout draft? " +
+    "The workout name, notes and locally entered sets will be cleared. " +
+    "Any draft already saved to Supabase will remain in the cloud."
+  );
+
+  if (!confirmed) return;
+
+  try {
+    localStorage.removeItem(`ironlog-active-workout:${userId}`);
+    localStorage.removeItem(`ironlog-workout-draft:${userId}`);
+  } catch {
+    window.alert(
+      "Unable to clear the local draft. Please check browser storage."
+    );
+    return;
+  }
+
+  setActiveWorkout(null);
+}}
       >
         <X />
       </button>
@@ -98,7 +158,7 @@ export default function WorkoutsPage({
     </div>
 
 <WorkoutLogger
-  key={userId}
+  key={`${userId}:${activeWorkout.id}`}
   userId={userId}
   exercises={exerciseList}
   previousPerformance={previousPerformance}
