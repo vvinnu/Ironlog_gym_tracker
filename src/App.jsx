@@ -6,6 +6,12 @@ import { fetchBodyweightHistory, saveBodyweightEntry } from "./services/bodyweig
 import { fetchCompletedWorkouts,fetchDraftWorkouts, saveWorkoutSession } from "./services/workoutService";
 import { fetchExercises, createExerciseRecord } from "./services/exerciseService";
 import { fetchWorkoutPlans,createWorkoutPlan,updateWorkoutPlan,deleteWorkoutPlan,} from "./services/workoutPlanService";
+import {
+  fetchActiveRotation,
+  createWorkoutRotation,
+  advanceWorkoutRotation,
+} from "./services/workoutRotationService";
+
 import { Home, Dumbbell, CalendarDays, TrendingUp, Settings, Menu, X, LogOut, CircleUserRound } from "lucide-react";
 // ============================================================
 // 01. LAZY-LOADED FEATURE PAGES
@@ -44,6 +50,19 @@ export default function App(){
   const [workoutPlans, setWorkoutPlans] = useState([]);
   const [workoutPlansLoading, setWorkoutPlansLoading] = useState(false);
   const [workoutPlansBusy, setWorkoutPlansBusy] = useState(false);
+
+  // 02.09 - Active workout rotation for this account.
+  const [workoutRotation, setWorkoutRotation] = useState(null);
+  const [rotationLoading, setRotationLoading] = useState(false);
+  const [rotationBusy, setRotationBusy] = useState(false);
+
+  // 02.10 - Rotation updates awaiting confirmation after a
+  // successfully completed workout.
+  const [pendingRotationUpdate, setPendingRotationUpdate] =
+    useState(null);
+  const [rotationRetryBusy, setRotationRetryBusy] =
+    useState(false);
+  const rotationRetryLock = useRef(false);
 
   const [newExerciseName,setNewExerciseName] = useState("");
 
@@ -120,6 +139,45 @@ useEffect(() => {
     setNotice("Unable to save workout metadata locally.");
   }
 }, [activeWorkout, user?.id]);
+
+// ============================================================
+// 02.10 - RESTORE PENDING ROTATION UPDATE
+// ============================================================
+
+/**
+ * 02.10 - Restore the retry information for the signed-in user.
+ *
+ * A completed workout is never saved again by this recovery.
+ * The retry record contains only rotation identifiers.
+ */
+useEffect(() => {
+  setPendingRotationUpdate(null);
+
+  if (!user?.id) return;
+
+  try {
+    const saved = localStorage.getItem(
+      `ironlog-pending-rotation:${user.id}`
+    );
+
+    if (!saved) return;
+
+    const parsed = JSON.parse(saved);
+
+    if (
+      parsed?.userId === user.id &&
+      typeof parsed.rotationId === "string" &&
+      typeof parsed.stepId === "string" &&
+      Number.isInteger(parsed.position)
+    ) {
+      setPendingRotationUpdate(parsed);
+    }
+  } catch {
+    setNotice(
+      "Unable to restore the pending rotation update."
+    );
+  }
+}, [user?.id]);
 
 // ============================================================
 // 02.05 - LOAD UNFINISHED CLOUD WORKOUTS
@@ -640,8 +698,141 @@ async function signOut() {
 
   
   // ============================================================
+  // 02.09 - LOAD ACTIVE WORKOUT ROTATION
+  // ============================================================
+
+  useEffect(() => {
+    if (!user?.id || !supabase) {
+      setWorkoutRotation(null);
+      setRotationLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setWorkoutRotation(null);
+    setRotationLoading(true);
+
+    async function loadRotation() {
+      const { data, error } = await fetchActiveRotation();
+
+      if (cancelled) return;
+
+      if (error) {
+        setNotice(`Unable to load rotation: ${error.message}`);
+      } else {
+        setWorkoutRotation(data);
+      }
+
+      setRotationLoading(false);
+    }
+
+    loadRotation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  // ============================================================
+  // 03.08 - CREATE WORKOUT ROTATION
+  // ============================================================
+
+  /**
+   * 03.08 - Create and activate a workout rotation.
+   */
+  async function saveRotation(name, steps) {
+    if (!user?.id) {
+      throw new Error("Sign in first.");
+    }
+
+    if (rotationBusy) {
+      throw new Error("A rotation operation is in progress.");
+    }
+
+    if (
+      !name.trim() ||
+      name.trim().length > 120 ||
+      steps.length === 0
+    ) {
+      throw new Error("Enter a valid rotation.");
+    }
+
+    for (const step of steps) {
+      if (
+        step.kind !== "rest" &&
+        (
+          step.kind !== "workout" ||
+          !workoutPlans.some(p => p.id === step.plan_id)
+        )
+      ) {
+        throw new Error("Select a valid saved plan for each workout step.");
+      }
+    }
+
+    setRotationBusy(true);
+
+    try {
+      const result = await createWorkoutRotation(
+        user.id,
+        name.trim(),
+        steps
+      );
+
+      if (result.error) throw new Error(result.error.message);
+
+      const refreshed = await fetchActiveRotation();
+
+      if (refreshed.error) {
+        throw new Error(refreshed.error.message);
+      }
+
+      setWorkoutRotation(refreshed.data);
+      setNotice("Workout rotation activated.");
+    } finally {
+      setRotationBusy(false);
+    }
+  }
+
+  // ============================================================
+  // 03.09 - ADVANCE WORKOUT ROTATION
+  // ============================================================
+
+  /**
+   * 03.09 - Advance the current step after a rest day or skip.
+   */
+  async function advanceRotation() {
+    if (!workoutRotation) {
+      throw new Error("No active rotation.");
+    }
+
+    if (rotationBusy) {
+      throw new Error("A rotation operation is in progress.");
+    }
+
+    setRotationBusy(true);
+
+    try {
+      const result = await advanceWorkoutRotation(workoutRotation);
+
+      if (result.error) throw new Error(result.error.message);
+
+      const refreshed = await fetchActiveRotation();
+
+      if (refreshed.error) {
+        throw new Error(refreshed.error.message);
+      }
+
+      setWorkoutRotation(refreshed.data);
+      setNotice("Rotation advanced to the next step.");
+    } finally {
+      setRotationBusy(false);
+    }
+  }
+
+  // ============================================================
   // 03.07 - START WORKOUT FROM A SAVED PLAN
   // ============================================================
+
 
   /**
    * 03.07 - Convert a saved plan into a new local workout.
@@ -651,7 +842,7 @@ async function signOut() {
    * @param {Object} selectedPlan - Plan selected by the user.
    * @returns {boolean} Whether the workout was started.
    */
-  function startWorkoutFromPlan(selectedPlan) {
+  function startWorkoutFromPlan(selectedPlan, rotationStepId = null) {
     if (!user?.id || !selectedPlan?.id) {
       setNotice("Sign in and select a workout plan first.");
       return false;
@@ -784,6 +975,14 @@ async function signOut() {
       ...emptyWorkout(user.id),
       name: plan.name,
       notes: plan.notes || "",
+
+      // 03.07.09 - Local rotation association.
+      // These fields are metadata, not RPC arguments.
+      rotation_id: rotationStepId ? workoutRotation?.id : null,
+      rotation_step_id: rotationStepId,
+      rotation_position: rotationStepId
+        ? workoutRotation?.next_position
+        : null,
     };
 
     // 03.07.07 - Save both local records with rollback on failure.
@@ -829,8 +1028,27 @@ async function signOut() {
     return true;
   }
 
-  async function createExercise(){
+  /**
+   * 03.10 - Start only the currently suggested rotation step.
+   */
+  function startSuggestedWorkout(plan) {
+    const step = workoutRotation?.workout_rotation_steps?.find(
+      item => item.position === workoutRotation.next_position
+    );
 
+    if (
+      !step ||
+      step.kind !== "workout" ||
+      step.plan_id !== plan.id
+    ) {
+      setNotice("Suggested workout changed. Refresh the page.");
+      return false;
+    }
+
+    return startWorkoutFromPlan(plan, step.id);
+  }
+
+  async function createExercise(){
 
     const name=newExerciseName.trim();
     if(!name){setNotice("Exercise name is required.");return;}
@@ -852,6 +1070,146 @@ setNewExerciseName("");
 setNewExerciseMuscle("");
 setShowExerciseForm(false);
 setNotice("Exercise created.");
+  }
+
+  // ============================================================
+  // 03.12 - COMPLETED WORKOUT ROTATION RECOVERY
+  // ============================================================
+
+  /**
+   * 03.12.01 - Store a pending rotation update.
+   *
+   * This is called only after the workout has been saved.
+   * The record is kept separately from workout draft data.
+   *
+   * @param {Object} target - Completed workout's rotation.
+   */
+  function rememberPendingRotation(target) {
+    setPendingRotationUpdate(target);
+
+    try {
+      localStorage.setItem(
+        `ironlog-pending-rotation:${target.userId}`,
+        JSON.stringify(target)
+      );
+    } catch {
+      setNotice(
+        "Workout saved, but rotation retry information " +
+        "could not be stored locally. Keep this page open."
+      );
+    }
+  }
+
+  /**
+   * 03.12.02 - Clear a confirmed rotation update.
+   *
+   * @param {Object} target - Rotation update to clear.
+   */
+  function clearPendingRotation(target) {
+    try {
+      localStorage.removeItem(
+        `ironlog-pending-rotation:${target.userId}`
+      );
+    } catch {
+      // In-memory state is still cleared for this session.
+    }
+
+    setPendingRotationUpdate(null);
+  }
+
+  /**
+   * 03.12.03 - Advance only the original completed step.
+   *
+   * The latest rotation is fetched before attempting the
+   * update. A changed rotation is never advanced blindly.
+   *
+   * @param {Object} target - Saved rotation association.
+   * @returns {Promise<void>}
+   */
+  async function applyCompletedRotation(target) {
+    if (!user?.id || target.userId !== user.id) {
+      throw new Error("The signed-in account has changed.");
+    }
+
+    const latest = await fetchActiveRotation();
+
+    if (latest.error) {
+      throw new Error(latest.error.message);
+    }
+
+    setWorkoutRotation(latest.data);
+
+    const currentStep =
+      latest.data?.workout_rotation_steps?.find(
+        step => step.position === latest.data.next_position
+      );
+
+    if (
+      latest.data?.id !== target.rotationId ||
+      latest.data.next_position !== target.position ||
+      currentStep?.id !== target.stepId
+    ) {
+      throw new Error(
+        "The active rotation no longer matches the " +
+        "completed workout. No step was advanced. " +
+        "Review your rotation before trying again."
+      );
+    }
+
+    const advanced = await advanceWorkoutRotation(latest.data);
+
+    if (advanced.error) {
+      throw new Error(advanced.error.message);
+    }
+
+    // The update succeeded. Confirm the new server state.
+    const refreshed = await fetchActiveRotation();
+
+    if (refreshed.error) {
+      throw new Error(
+        "The update may have succeeded, but the latest " +
+        "rotation could not be loaded: " +
+        refreshed.error.message
+      );
+    }
+
+    setWorkoutRotation(refreshed.data);
+    clearPendingRotation(target);
+  }
+
+  /**
+   * 03.12.04 - Retry a rotation update without saving
+   * the completed workout again.
+   *
+   * Uses a synchronous lock to prevent repeated clicks.
+   */
+  async function retryRotationUpdate() {
+    if (
+      !pendingRotationUpdate ||
+      rotationRetryLock.current
+    ) {
+      return;
+    }
+
+    rotationRetryLock.current = true;
+    setRotationRetryBusy(true);
+
+    try {
+      await applyCompletedRotation(pendingRotationUpdate);
+
+      setNotice(
+        "Rotation updated successfully. " +
+        "Your workout was already saved."
+      );
+    } catch (error) {
+      setNotice(
+        "Workout is saved. Rotation update still needs " +
+        "attention: " + error.message
+      );
+    } finally {
+      rotationRetryLock.current = false;
+      setRotationRetryBusy(false);
+    }
   }
 
   async function saveSession(exercises, complete = false) {
@@ -908,6 +1266,31 @@ const { data: completed, error: historyError } =
 setWorkouts(normalizeWorkoutHistory(completed));
       setNotice("Workout saved to Supabase.");
     }
+
+// 03.11 - Advance the matching rotation after completion.
+// Save retry information before attempting the update.
+// Never repeat the completed workout save.
+if (activeWorkout.rotation_id && activeWorkout.rotation_step_id) {
+  const rotationTarget = {
+    userId: user.id,
+    rotationId: activeWorkout.rotation_id,
+    stepId: activeWorkout.rotation_step_id,
+    position: activeWorkout.rotation_position,
+  };
+
+  // 03.11.01 - Preserve recovery information.
+  rememberPendingRotation(rotationTarget);
+
+  try {
+    await applyCompletedRotation(rotationTarget);
+    setNotice("Workout saved and rotation advanced.");
+  } catch (error) {
+    setNotice(
+      "Workout saved successfully, but the rotation " +
+      "update needs attention: " + error.message
+    );
+  }
+}
 
 // 03.03 - Clear completed workout metadata.
 try {
@@ -969,7 +1352,44 @@ const { data, error } = await saveBodyweightEntry(
     </aside>
     <main className="main">
       <header className="topbar"><button className="icon-btn menu-btn" onClick={()=>setMobileMenu(!mobileMenu)}><Menu/></button><div><div className="eyebrow">TRAINING SPACE</div><div className="top-title">{tab}</div></div><div className="top-right"><span className="sync-pill"><span className="live-dot"/>{isCloudConfigured?"Cloud account":"Cloud setup"}</span><div className="avatar">{(user.email||"U")[0].toUpperCase()}</div></div></header>
-      {notice && <div className="notice global-notice">{notice}<button onClick={()=>setNotice("")}><X size={15}/></button></div>}
+      {notice && (
+        <div className="notice global-notice">
+          <span>{notice}</span>
+          <button
+            type="button"
+            aria-label="Dismiss notification"
+            onClick={() => setNotice("")}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      {/* 04.02 - Persistent completed-workout rotation recovery. */}
+      {pendingRotationUpdate?.userId === user.id && (
+        <div className="rotation-retry-panel">
+          <div>
+            <strong>Rotation update needs attention</strong>
+            <p>
+              Your workout was saved successfully.
+              The rotation update has not been confirmed.
+              You can retry without saving the workout again.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            className="primary"
+            disabled={rotationRetryBusy || rotationBusy}
+            onClick={retryRotationUpdate}
+          >
+            {rotationRetryBusy
+              ? "Checking Rotation..."
+              : "Retry Rotation Update"}
+          </button>
+        </div>
+      )}
+
 <Suspense fallback={<div className="content">Loading page...</div>}>
   {tab==="Overview" && <Dashboard
         workouts={workouts} weights={weights} weekCount={weekCount}
@@ -989,6 +1409,12 @@ const { data, error } = await saveBodyweightEntry(
     onSavePlan={savePlan}
     onDeletePlan={removePlan}
     onStartPlan={startWorkoutFromPlan}
+    workoutRotation={workoutRotation}
+    rotationLoading={rotationLoading}
+    rotationBusy={rotationBusy}
+    onSaveRotation={saveRotation}
+    onAdvanceRotation={advanceRotation}
+    onStartSuggestedWorkout={startSuggestedWorkout}
     cloudDrafts={cloudDrafts}
 
 
