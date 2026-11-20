@@ -59,6 +59,7 @@ export default function WorkoutPlans({
   busy = false,
   onSavePlan,
   onDeletePlan,
+  onStartPlan,
 }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(null);
@@ -261,6 +262,21 @@ export default function WorkoutPlans({
                   flexWrap: "wrap",
                   marginTop: "12px",
                 }}>
+
+                  {/* 02.15 - Start a new session from this plan. */}
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={
+                      busy ||
+                      Boolean(form) ||
+                      entries.length === 0
+                    }
+                    onClick={() => onStartPlan(plan)}
+                  >
+                    Start Workout
+                  </button>
+
                   <button
                     type="button"
                     className="primary"
@@ -269,6 +285,7 @@ export default function WorkoutPlans({
                   >
                     Edit
                   </button>
+
 
                   <button
                     type="button"

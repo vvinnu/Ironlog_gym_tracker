@@ -638,7 +638,199 @@ async function signOut() {
     }
   }
 
+  
+  // ============================================================
+  // 03.07 - START WORKOUT FROM A SAVED PLAN
+  // ============================================================
+
+  /**
+   * 03.07 - Convert a saved plan into a new local workout.
+   * Uses the existing logger draft format and storage keys.
+   * Does not modify the saved plan or cloud workout drafts.
+   *
+   * @param {Object} selectedPlan - Plan selected by the user.
+   * @returns {boolean} Whether the workout was started.
+   */
+  function startWorkoutFromPlan(selectedPlan) {
+    if (!user?.id || !selectedPlan?.id) {
+      setNotice("Sign in and select a workout plan first.");
+      return false;
+    }
+
+    // 03.07.01 - Use the current plan from application state.
+    const plan = workoutPlans.find(
+      item => item.id === selectedPlan.id
+    );
+
+    if (!plan) {
+      setNotice("This plan is no longer available. Refresh the page.");
+      return false;
+    }
+
+    const entries = [
+      ...(plan.workout_plan_exercises || []),
+    ].sort((a, b) => a.position - b.position);
+
+    if (!entries.length) {
+      setNotice("Add exercises to this plan before starting it.");
+      return false;
+    }
+
+    // 03.07.02 - Validate every exercise before changing local data.
+    const plannedExercises = [];
+
+    for (const entry of entries) {
+      const exercise = exerciseList.find(
+        item => item.id === entry.exercise_id
+      );
+
+      if (!exercise) {
+        setNotice(
+          "An exercise in this plan is unavailable. " +
+          "Refresh the exercise library before starting."
+        );
+        return false;
+      }
+
+      const setCount = entry.target_sets == null
+        ? 3
+        : Number(entry.target_sets);
+
+      if (
+        !Number.isSafeInteger(setCount) ||
+        setCount < 1 ||
+        setCount > 100
+      ) {
+        setNotice(
+          "This plan has an invalid target set count. " +
+          "Use a value between 1 and 100."
+        );
+        return false;
+      }
+
+      plannedExercises.push({
+        exercise,
+        setCount,
+        targetReps: entry.target_reps || "",
+      });
+    }
+
+    // 03.07.03 - Inspect the current account's local draft.
+    const metadataKey = `ironlog-active-workout:${user.id}`;
+    const cardsKey = `ironlog-workout-draft:${user.id}`;
+
+    let previousMetadata;
+    let previousCards;
+    let existingCards;
+
+    try {
+      previousMetadata = localStorage.getItem(metadataKey);
+      previousCards = localStorage.getItem(cardsKey);
+
+      existingCards = previousCards
+        ? JSON.parse(previousCards)
+        : [];
+
+      if (!Array.isArray(existingCards)) {
+        throw new Error("Invalid existing workout draft.");
+      }
+    } catch {
+      setNotice(
+        "Unable to inspect the current local workout. " +
+        "No changes were made."
+      );
+      return false;
+    }
+
+    // 03.07.04 - Never silently replace unfinished local work.
+    const hasLocalWorkout =
+      Boolean(activeWorkout) ||
+      Boolean(previousMetadata) ||
+      existingCards.length > 0;
+
+    if (hasLocalWorkout) {
+      const confirmed = window.confirm(
+        `Start "${plan.name}"? ` +
+        "Your current local workout and its entered sets " +
+        "will be replaced. Unsaved local changes will be lost. " +
+        "Workouts already saved to Supabase will remain in the cloud."
+      );
+
+      if (!confirmed) return false;
+    }
+
+    // 03.07.05 - Build ordered cards for the existing logger.
+    const newCards = plannedExercises.map(
+      ({ exercise, setCount, targetReps }) => ({
+        id: crypto.randomUUID(),
+        exercise_id: exercise.id,
+        name: exercise.name,
+        target_sets: setCount,
+        target_reps: targetReps,
+        rows: Array.from({ length: setCount }, () => ({
+          id: crypto.randomUUID(),
+          weight: "",
+          reps: "",
+        })),
+        collapsed: false,
+        previousCollapsed: false,
+        saved: false,
+      })
+    );
+
+    // 03.07.06 - Create independent workout metadata.
+    // The existing save-session RPC does not accept plan_id.
+    const newWorkout = {
+      ...emptyWorkout(user.id),
+      name: plan.name,
+      notes: plan.notes || "",
+    };
+
+    // 03.07.07 - Save both local records with rollback on failure.
+    try {
+      localStorage.setItem(
+        cardsKey,
+        JSON.stringify(newCards)
+      );
+
+      localStorage.setItem(
+        metadataKey,
+        JSON.stringify(newWorkout)
+      );
+    } catch {
+      try {
+        if (previousCards === null) {
+          localStorage.removeItem(cardsKey);
+        } else {
+          localStorage.setItem(cardsKey, previousCards);
+        }
+
+        if (previousMetadata === null) {
+          localStorage.removeItem(metadataKey);
+        } else {
+          localStorage.setItem(metadataKey, previousMetadata);
+        }
+      } catch {
+        setNotice(
+          "Workout setup failed and local recovery was unsuccessful. " +
+          "Avoid refreshing until you check your current workout."
+        );
+        return false;
+      }
+
+      setNotice("Unable to store the planned workout locally.");
+      return false;
+    }
+
+    // 03.07.08 - A new workout ID remounts the logger.
+    // Its cards are restored from the newly written local draft.
+    setActiveWorkout(newWorkout);
+    setNotice(`Workout "${plan.name}" started.`);
+    return true;
+  }
+
   async function createExercise(){
+
 
     const name=newExerciseName.trim();
     if(!name){setNotice("Exercise name is required.");return;}
@@ -796,7 +988,9 @@ const { data, error } = await saveBodyweightEntry(
     workoutPlansBusy={workoutPlansBusy}
     onSavePlan={savePlan}
     onDeletePlan={removePlan}
+    onStartPlan={startWorkoutFromPlan}
     cloudDrafts={cloudDrafts}
+
 
     cloudDraftsLoading={cloudDraftsLoading}
     onResumeCloudDraft={resumeCloudDraft}

@@ -322,10 +322,28 @@ useEffect(() => {
         <div className="ironlog-card" key={card.id}>
           <div className="ironlog-card-header">
             <div>
+
               <h3>{card.name}</h3>
+
+              {/* 04.01 - Show planned targets as guidance only. */}
+              {(card.target_sets || card.target_reps) && (
+                <small
+                  style={{
+                    display: "block",
+                    marginBottom: "4px",
+                  }}
+                >
+                  Target: {card.target_sets || card.rows.length} sets
+                  {card.target_reps
+                    ? ` × ${card.target_reps} reps`
+                    : ""}
+                </small>
+              )}
+
               <small>
                 {card.saved ? "Draft saved" : "Unsaved changes"}
               </small>
+
             </div>
 
             <div className="ironlog-actions">

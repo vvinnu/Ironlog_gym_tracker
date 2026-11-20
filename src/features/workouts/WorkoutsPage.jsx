@@ -32,8 +32,11 @@ export default function WorkoutsPage({
   workoutPlansBusy = false,
   onSavePlan,
   onDeletePlan,
+  // 01.03 - Start a workout from a saved plan.
+  onStartPlan,
 
   cloudDrafts = [],
+
 
   cloudDraftsLoading = false,
   onResumeCloudDraft,
@@ -68,6 +71,8 @@ export default function WorkoutsPage({
           busy={workoutPlansBusy}
           onSavePlan={onSavePlan}
           onDeletePlan={onDeletePlan}
+          onStartPlan={onStartPlan}
+
         />
 
         {/* ============================================================
